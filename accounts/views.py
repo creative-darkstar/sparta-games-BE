@@ -1,9 +1,34 @@
 from django.shortcuts import redirect, render
+from django.views.decorators.csrf import csrf_exempt
+
+import rest_framework
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from django.contrib.auth import get_user_model
+from rest_framework.decorators import api_view, renderer_classes
+from rest_framework.renderers import JSONRenderer
+
+from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
+from allauth.socialaccount.providers.oauth2.client import OAuth2Client
+
+from dj_rest_auth import views
+from dj_rest_auth.registration.views import SocialLoginView
+from dj_rest_auth.serializers import JWTSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from django.contrib import messages
+from django.contrib.auth import get_user_model, login
 import re
+import requests
 from rest_framework import status
+
+
+class AlertException(Exception):
+    pass
+
+
+class TokenException(Exception):
+    pass
+
 
 # ---------- API---------- #
 class SignUpAPIView(APIView):
@@ -51,6 +76,52 @@ class SignUpAPIView(APIView):
                 "email":user.email,
             },
         }, status=status.HTTP_201_CREATED)
+
+
+@api_view(('GET',))
+@renderer_classes((JSONRenderer,))
+def google_login_callback(request):
+    try:
+        # token_id = request.META.get('HTTP_AUTHORIZATION')
+        token_id = request.META.get('HTTP_AUTHORIZATION')
+        profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={token_id}')
+        profile_json = profile_request.json()
+
+        username = profile_json.get('name', None)
+        email = profile_json.get('email', None)
+        try:
+            user = get_user_model().objects.get(email=email)
+        except get_user_model().DoesNotExist:
+            user = None
+        if user is not None:
+            pass
+            # if user.login_method != get_user_model().LOGIN_GOOGLE:
+            #     AlertException(f'{user.login_method}로 로그인 해주세요')
+        else:
+            # user = get_user_model()(email=email, login_method=get_user_model().LOGIN_GOOGLE, nickname=nickname)
+            user = get_user_model()(email=email, username=username)
+            user.set_unusable_password()
+            user.save()
+        messages.success(request, f'{user.email} 구글 로그인 성공')
+        # login(request, user, backend="django.contrib.auth.backends.ModelBackend",)
+
+        token = RefreshToken.for_user(user)
+        data = {
+            'user': user,
+            'access': str(token.access_token),
+            'refresh': str(token),
+        }
+        serializer = JWTSerializer(data)
+        return Response({'message': '로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+    except AlertException as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+    except TokenException as e:
+        print(e)
+        # 개발 단계에서 확인
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ---------- Web---------- #
