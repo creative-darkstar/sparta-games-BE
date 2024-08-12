@@ -154,11 +154,6 @@ SOCIALACCOUNT_PROVIDERS = {
             'access_type': 'online',
         },
         'OAUTH_PKCE_ENABLED': True,
-        # 'APP': {
-        #     'client_id': '35280634796-fmgmifreq5cao4p1pl4ta3a05e04m6i4.apps.googleusercontent.com',
-        #     'secret': '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',
-        #     'key': ''
-        # }
     }
 }
 
