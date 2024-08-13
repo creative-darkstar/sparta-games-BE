@@ -20,6 +20,7 @@ from django.contrib.auth import get_user_model, login
 import re
 import requests
 from rest_framework import status
+from spartagames import config
 
 
 class AlertException(Exception):
@@ -81,10 +82,31 @@ class SignUpAPIView(APIView):
 @api_view(('GET',))
 @renderer_classes((JSONRenderer,))
 def google_login_callback(request):
+    # Authorization code를 token으로 전환
+    try:
+        authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        url = "https://oauth2.googleapis.com/token"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        data = {
+            "code": authorization_code,
+            "client_id": config.GOOGLE_AUTH["client_id"],
+            "client_secret": config.GOOGLE_AUTH["client_secret"],
+            "redirect_uri": config.GOOGLE_AUTH["redirect_uri"],
+            "grant_type": "authorization_code"
+        }
+        tokens_request = requests.post(url, headers=headers, data=data)
+        tokens_json = tokens_request.json()
+    except Exception as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
         # token_id = request.META.get('HTTP_AUTHORIZATION')
-        token_id = request.META.get('HTTP_AUTHORIZATION')
-        profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={token_id}')
+        id_token = tokens_json["id_token"]
+        profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={id_token}')
         profile_json = profile_request.json()
 
         username = profile_json.get('name', None)
