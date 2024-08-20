@@ -146,6 +146,79 @@ def google_login_callback(request):
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(('GET',))
+@renderer_classes((JSONRenderer,))
+def kakao_login_callback(request):
+    # Authorization code를 token으로 전환
+    try:
+        authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        url = "https://kauth.kakao.com/oauth/token"
+        headers = {"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"}
+        data = {
+            "code": authorization_code,
+            "client_id": config.KAKAO_AUTH["client_id"],
+            "redirect_uri": config.KAKAO_AUTH["redirect_uri"],
+            "grant_type": "authorization_code"
+        }
+        tokens_request = requests.post(url, headers=headers, data=data)
+        tokens_json = tokens_request.json()
+    except Exception as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # token 유효성 확인 및 로그인 진행, 유저 정보 전달
+    try:
+        # token_id = request.META.get('HTTP_AUTHORIZATION')
+        access_token = tokens_json["access_token"]
+        url = "https://kapi.kakao.com/v2/user/me"
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+            "Authorization": "Bearer " + access_token,
+        }
+        profile_request = requests.get(url, headers=headers)
+        profile_json = profile_request.json()
+        
+        account = profile_json.get('kakao_account', None)
+        username = account["profile"]["nickname"]
+        email = account["email"]
+        
+        try:
+            user = get_user_model().objects.get(email=email)
+        except get_user_model().DoesNotExist:
+            user = None
+        if user is not None:
+            pass
+            # if user.login_method != get_user_model().LOGIN_GOOGLE:
+            #     AlertException(f'{user.login_method}로 로그인 해주세요')
+        else:
+            # user = get_user_model()(email=email, login_method=get_user_model().LOGIN_GOOGLE, nickname=nickname)
+            user = get_user_model()(email=email, username=username)
+            user.set_unusable_password()
+            user.save()
+        messages.success(request, f'{user.email} 카카오 로그인 성공')
+        # login(request, user, backend="django.contrib.auth.backends.ModelBackend",)
+
+        token = RefreshToken.for_user(user)
+        data = {
+            'user': user,
+            'access': str(token.access_token),
+            'refresh': str(token),
+        }
+        serializer = JWTSerializer(data)
+        return Response({'message': '로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+    except AlertException as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+    except TokenException as e:
+        print(e)
+        # 개발 단계에서 확인
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # ---------- Web---------- #
 def login_page(request):
     return render(request, 'accounts/login.html')

@@ -20,6 +20,7 @@ urlpatterns = [
     
     # --- Social Login API --- #
     path("api/google/callback/", views.google_login_callback, name='google_callback'),
+    path("api/kakao/callback/", views.kakao_login_callback, name='kakao_callback'),
 
     # ---------- Web---------- #
     path('login/', views.login_page, name='login_page'),
