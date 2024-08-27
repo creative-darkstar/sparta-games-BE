@@ -104,37 +104,14 @@ def google_login_callback(request):
     
     # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
-        # token_id = request.META.get('HTTP_AUTHORIZATION')
         id_token = tokens_json["id_token"]
         profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={id_token}')
         profile_json = profile_request.json()
 
         username = profile_json.get('name', None)
         email = profile_json.get('email', None)
-        try:
-            user = get_user_model().objects.get(email=email)
-        except get_user_model().DoesNotExist:
-            user = None
-        if user is not None:
-            pass
-            # if user.login_method != get_user_model().LOGIN_GOOGLE:
-            #     AlertException(f'{user.login_method}로 로그인 해주세요')
-        else:
-            # user = get_user_model()(email=email, login_method=get_user_model().LOGIN_GOOGLE, nickname=nickname)
-            user = get_user_model()(email=email, username=username)
-            user.set_unusable_password()
-            user.save()
-        messages.success(request, f'{user.email} 구글 로그인 성공')
-        # login(request, user, backend="django.contrib.auth.backends.ModelBackend",)
-
-        token = RefreshToken.for_user(user)
-        data = {
-            'user': user,
-            'access': str(token.access_token),
-            'refresh': str(token),
-        }
-        serializer = JWTSerializer(data)
-        return Response({'message': '로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+        
+        return social_signinup(email=email, username=username, provider="구글")
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -144,88 +121,52 @@ def google_login_callback(request):
         print(e)
         # 개발 단계에서 확인
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-    
-class NaverLoginAPIView(APIView):    
-    def get(self, request, *args, **kwargs):
-        client_id = config.NAVER_AUTH["client_id"]
-        response_type = "code"
-        # Naver에서 설정했던 callback url을 입력해주어야 한다.
-        uri = "http://127.0.0.1:8000/accounts/api/naver/callback"
-        state = config.NAVER_AUTH["state"]
-        # Naver Document 에서 확인했던 요청 url
-        url = "https://nid.naver.com/oauth2.0/authorize"
         
-        # Document에 나와있는 요소들을 담아서 요청한다.
-        return redirect(
-            f'{url}?response_type={response_type}&client_id={client_id}&redirect_uri={uri}&state={state}'
-        )
-        
-        
-class NaverCallbackAPIView(APIView):
-    def get(self, request, *args, **kwargs):
-        try:
-            authorization_code = request.META.get('HTTP_AUTHORIZATION')
-            url = "https://nid.naver.com/oauth2.0/token"
-            data = {
-                "grant_type": "authorization_code",
-                "client_id": config.NAVER_AUTH["client_id"],
-                "client_secret": config.NAVER_AUTH["client_secret"],
-                "code": authorization_code,
-                "state": config.NAVER_AUTH["state"],
-            }
-            tokens_request = requests.get(url, params=data)
-            tokens_json = tokens_request.json()
-        except Exception as e:
-            print(e)
-            messages.error(request, e)
-            # 유저에게 알림
-            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-    
-        try:
-            access_token = tokens_json["access_token"]
-            url = "https://openapi.naver.com/v1/nid/me"
-            headers = {
-                "Authorization": "Bearer " + access_token,
-            }
-            profile_request = requests.get(url, headers=headers)
-            profile_json = profile_request.json().get("response", None)
 
-            username = profile_json.get('name', None)
-            email = profile_json.get('email', None)
-            try:
-                user = get_user_model().objects.get(email=email)
-            except get_user_model().DoesNotExist:
-                user = None
-            if user is not None:
-                pass
-                # if user.login_method != get_user_model().LOGIN_GOOGLE:
-                #     AlertException(f'{user.login_method}로 로그인 해주세요')
-            else:
-                # user = get_user_model()(email=email, login_method=get_user_model().LOGIN_GOOGLE, nickname=nickname)
-                user = get_user_model()(email=email, username=username)
-                user.set_unusable_password()
-                user.save()
-            messages.success(request, f'{user.email} 구글 로그인 성공')
-            # login(request, user, backend="django.contrib.auth.backends.ModelBackend",)
+@api_view(('GET',))
+@renderer_classes((JSONRenderer,))
+def naver_login_callback(request):
+    try:
+        authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        url = "https://nid.naver.com/oauth2.0/token"
+        data = {
+            "grant_type": "authorization_code",
+            "client_id": config.NAVER_AUTH["client_id"],
+            "client_secret": config.NAVER_AUTH["client_secret"],
+            "code": authorization_code,
+            "state": config.NAVER_AUTH["state"],
+        }
+        tokens_request = requests.get(url, params=data)
+        tokens_json = tokens_request.json()
+    except Exception as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-            token = RefreshToken.for_user(user)
-            data = {
-                'user': user,
-                'access': str(token.access_token),
-                'refresh': str(token),
-            }
-            serializer = JWTSerializer(data)
-            return Response({'message': '로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
-        except AlertException as e:
-            print(e)
-            messages.error(request, e)
-            # 유저에게 알림
-            return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
-        except TokenException as e:
-            print(e)
-            # 개발 단계에서 확인
-            return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        access_token = tokens_json["access_token"]
+        url = "https://openapi.naver.com/v1/nid/me"
+        headers = {
+            "Authorization": "Bearer " + access_token,
+        }
+        profile_request = requests.get(url, headers=headers)
+        profile_json = profile_request.json().get("response", None)
+
+        username = profile_json.get('name', None)
+        email = profile_json.get('email', None)
+        
+        return social_signinup(email=email, username=username, provider="네이버")
+    except AlertException as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+    except TokenException as e:
+        print(e)
+        # 개발 단계에서 확인
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 @api_view(('GET',))
 @renderer_classes((JSONRenderer,))
@@ -251,7 +192,6 @@ def kakao_login_callback(request):
     
     # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
-        # token_id = request.META.get('HTTP_AUTHORIZATION')
         access_token = tokens_json["access_token"]
         url = "https://kapi.kakao.com/v2/user/me"
         headers = {
@@ -265,30 +205,7 @@ def kakao_login_callback(request):
         username = account["profile"]["nickname"]
         email = account["email"]
         
-        try:
-            user = get_user_model().objects.get(email=email)
-        except get_user_model().DoesNotExist:
-            user = None
-        if user is not None:
-            pass
-            # if user.login_method != get_user_model().LOGIN_GOOGLE:
-            #     AlertException(f'{user.login_method}로 로그인 해주세요')
-        else:
-            # user = get_user_model()(email=email, login_method=get_user_model().LOGIN_GOOGLE, nickname=nickname)
-            user = get_user_model()(email=email, username=username)
-            user.set_unusable_password()
-            user.save()
-        messages.success(request, f'{user.email} 카카오 로그인 성공')
-        # login(request, user, backend="django.contrib.auth.backends.ModelBackend",)
-
-        token = RefreshToken.for_user(user)
-        data = {
-            'user': user,
-            'access': str(token.access_token),
-            'refresh': str(token),
-        }
-        serializer = JWTSerializer(data)
-        return Response({'message': '로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+        return social_signinup(email=email, username=username, provider="카카오")
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -298,6 +215,25 @@ def kakao_login_callback(request):
         print(e)
         # 개발 단계에서 확인
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# 회원가입 또는 로그인을 처리하는 함수
+def social_signinup(email, username, provider=''):
+    try:
+        user = get_user_model().objects.get(email=email)
+    except get_user_model().DoesNotExist:
+        user = None
+    if user is None:
+        return Response({"message": "회원가입 페이지로 이동", "username": username, "email": email})
+
+    token = RefreshToken.for_user(user)
+    data = {
+        'user': user,
+        'access': str(token.access_token),
+        'refresh': str(token),
+    }
+    serializer = JWTSerializer(data)
+    return Response({'message': f'{provider} 로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
 
 
 # ---------- Web---------- #
