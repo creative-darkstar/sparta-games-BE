@@ -217,6 +217,56 @@ def kakao_login_callback(request):
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(('GET',))
+@renderer_classes((JSONRenderer,))
+def discord_login_callback(request):
+    # Authorization code를 token으로 전환
+    try:
+        authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        url = "https://discord.com/api/oauth2/token"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        data = {
+            "code": authorization_code,
+            "client_id": config.DISCORD_AUTH["client_id"],
+            "client_secret": config.DISCORD_AUTH["client_secret"],
+            "redirect_uri": config.DISCORD_AUTH["redirect_uri"],
+            "grant_type": "authorization_code",
+            "scope": 'identify, email',
+        }
+        tokens_request = requests.post(url, headers=headers, data=data)
+        tokens_json = tokens_request.json()
+    except Exception as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # token 유효성 확인 및 로그인 진행, 유저 정보 전달
+    try:
+        access_token = tokens_json["access_token"]
+        url = "https://discordapp.com/api/users/@me"
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+            "Authorization": "Bearer " + access_token,
+        }
+        profile_request = requests.get(url, headers=headers)
+        profile_json = profile_request.json()
+        
+        username = profile_json.get('username', None)
+        email = profile_json.get('email', None)
+        
+        return social_signinup(email=email, username=username, provider="디스코드")
+    except AlertException as e:
+        print(e)
+        messages.error(request, e)
+        # 유저에게 알림
+        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+    except TokenException as e:
+        print(e)
+        # 개발 단계에서 확인
+        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # 회원가입 또는 로그인을 처리하는 함수
 def social_signinup(email, username, provider=''):
     try:

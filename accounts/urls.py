@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/google/callback/", views.google_login_callback, name='google_callback'),
     path("api/naver/callback/", views.naver_login_callback, name='naver_callback'),
     path("api/kakao/callback/", views.kakao_login_callback, name='kakao_callback'),
+    path("api/discord/callback/", views.discord_login_callback, name='discord_callback'),
 
     # ---------- Web---------- #
     path('login/', views.login_page, name='login_page'),
