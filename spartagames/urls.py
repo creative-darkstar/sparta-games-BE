@@ -29,8 +29,8 @@ urlpatterns = [
     path('qnas/', include('qnas.urls')),
 
     # ---------- Web ---------- #
-    path('', views.main_view, name='main_view'),
-    path('search/', views.search_view, name='search_view'),
+    # path('', views.main_view, name='main_view'),
+    # path('search/', views.search_view, name='search_view'),
 ]
 
 if settings.DEBUG:

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Game, Comment, Screenshot, Tag
+from .models import Game, Review, GameCategory, Screenshot
 
 
 class GameListSerializer(serializers.ModelSerializer):
@@ -16,8 +16,7 @@ class GameCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Game
         fields = "__all__"
-        read_only_fields = ('like', 'tag', 'maker',
-                            'is_visible', 'view_cnt', 'register_state')
+        read_only_fields = ('maker', 'is_visible', 'view_cnt', 'register_state')
 
 
 class GameDetailSerializer(serializers.ModelSerializer):
@@ -26,23 +25,23 @@ class GameDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Game
         fields = "__all__"
-        read_only_fields = ('like', 'tag', 'maker')
+        read_only_fields = ('maker')
 
 
-class CommentSerializer(serializers.ModelSerializer):
+class ReviewSerializer(serializers.ModelSerializer):
     author_name = serializers.CharField(
         source='author.username', read_only=True)
     src = serializers.ImageField(source='author.image', read_only=True)
     replies = serializers.SerializerMethodField()
 
     class Meta:
-        model = Comment
+        model = Review
         fields = "__all__"
         read_only_fields = ('is_visible', 'game', 'author',)
 
     def get_replies(self, obj):
         if obj.reply.exists():
-            return CommentSerializer(obj.reply, many=True).data
+            return ReviewSerializer(obj.reply, many=True).data
         return []
 
 
@@ -52,7 +51,7 @@ class ScreenshotSerializer(serializers.ModelSerializer):
         fields = ('id', 'src', )
 
 
-class TagSerailizer(serializers.ModelSerializer):
+class CategorySerailizer(serializers.ModelSerializer):
     class Meta:
-        model = Tag
+        model = GameCategory
         fields = ('pk', 'name')
