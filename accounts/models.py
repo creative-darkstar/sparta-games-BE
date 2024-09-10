@@ -10,6 +10,8 @@ class CustomUserManager(BaseUserManager):
             raise ValueError("The Email field must be set")
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
+        extra_fields.setdefault('is_staff', False)  # 일반 사용자는 관리자 권한이 없으므로 False로 기본값 설정
+        extra_fields.setdefault('is_superuser', False)  # 일반 사용자도 superuser가 아니므로 False로 기본값 설정
         user.set_password(password)
         user.save(using=self._db)
         return user

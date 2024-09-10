@@ -5,6 +5,8 @@ from django.contrib.auth import get_user_model
 import re
 from rest_framework import status
 
+from games.models import GameCategory
+
 # ---------- API---------- #
 class SignUpAPIView(APIView):
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
@@ -15,7 +17,7 @@ class SignUpAPIView(APIView):
         password = request.data.get("password")
         password_check = request.data.get("password_check")
         nickname = request.data.get("nickname")
-        game_category = request.data.get("game_category")
+        game_category = request.data.getlist("game_category")
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
@@ -44,10 +46,13 @@ class SignUpAPIView(APIView):
             email = email,
             password = password,
             nickname = nickname,
-            game_category = game_category,
             user_tech = user_tech,
             is_maker = is_maker,
         )
+
+        # 카테고리 가져오기
+        game_categories = GameCategory.objects.filter(name__in=game_category)
+        user.game_category.set(game_categories)  # ManyToManyField 값 설정
         
         return Response({
             "message":"회원가입 성공",
