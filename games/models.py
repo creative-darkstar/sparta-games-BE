@@ -123,7 +123,7 @@ class ReviewsLike(models.Model):
     review = models.ForeignKey(
         Review, on_delete=models.CASCADE, related_name="reviews"
     )
-    is_like = models.BooleanField(default=True)
+    is_like = models.IntegerField(default=0)
 
 
 class Screenshot(models.Model):
