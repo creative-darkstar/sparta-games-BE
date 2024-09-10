@@ -41,7 +41,7 @@ class SignUpAPIView(APIView):
 
         # DB에 유저 등록
         user = get_user_model().objects.create_user(
-            email = email
+            email = email,
             password = password,
             nickname = nickname,
             game_category = game_category,
