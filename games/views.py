@@ -115,12 +115,16 @@ class GameListAPIView(APIView):
             title=request.data.get('title'),
             thumbnail=request.FILES.get('thumbnail'),
             youtube_url=request.data.get('youtube_url'),
-            maker=request.user,
+            maker=request.user, #FE 확인필요
             content=request.data.get('content'),
             gamefile=request.FILES.get('gamefile'),
+            base_control=request.data.get('base_control'),
+            release_note=request.data.get('release_note'),
+            star=0,
+            review_cnt=0,
         )
 
-        # 태그 저장
+        # 카테고리 저장
         category_data = request.data.get('category')
         if category_data:
             for item in category_data.split(','):
@@ -135,15 +139,7 @@ class GameListAPIView(APIView):
             )
             screenshots.append(screenshot.src.url)
 
-        return Response(
-            {
-                "game": {
-                    "title": game.title,
-                },
-                "screenshots": screenshots
-            },
-            status=status.HTTP_200_OK
-        )
+        return Response({"message":"게임업로드 성공했습니다"},status=status.HTTP_200_OK)
 
 
 class GameDetailAPIView(APIView):
@@ -168,15 +164,7 @@ class GameDetailAPIView(APIView):
 
     def get(self, request, game_pk):
         game = self.get_object(game_pk)
-        game.view_cnt += 1  # 아티클 뷰수 조회
-        game.save()  # 아티클 뷰수 조회
 
-        stars = list(game.reviews.all().values('star'))
-        star_list = [d['star'] for d in stars]
-        if len(star_list) == 0:
-            star_score = None
-        else:
-            star_score = round(sum(star_list)/len(star_list), 1)
         serializer = GameDetailSerializer(game)
         # data에 serializer.data를 assignment
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
@@ -188,7 +176,6 @@ class GameDetailAPIView(APIView):
         categories = game.category.all()
         category_serializer = CategorySerailizer(categories, many=True)
 
-        data["star_score"] = star_score
         data["screenshot"] = screenshot_serializer.data
         data['category'] = category_serializer.data
 
@@ -208,9 +195,10 @@ class GameDetailAPIView(APIView):
                 game.gamefile = request.FILES.get("gamefile")
             game.title = request.data.get("title", game.title)
             game.thumbnail = request.FILES.get("thumbnail", '')
-            game.youtube_url = request.data.get(
-                "youtube_url", game.youtube_url)
+            game.youtube_url = request.data.get("youtube_url", game.youtube_url)
             game.content = request.data.get("content", game.content)
+            game.base_control=request.data.get('base_control', game.base_control),
+            game.release_note=request.data.get('release_note', game.release_note),
             game.save()
 
             category_data = request.data.get('category')
@@ -299,25 +287,20 @@ class ReviewAPIView(APIView):
         return permissions
 
     def get(self, request, game_pk):
-        reviews = Review.objects.all().filter(game=game_pk, root__isnull=True)
+        reviews = Review.objects.all().filter(game=game_pk)
         serializer = ReviewSerializer(reviews, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-        
-        # root 기본 설정
-        root_id = request.data.get('root')
-        root = None
-
-        # root_id가 있으면 대댓글의 root를 설정
-        if root_id:
-            root = get_object_or_404(Review, pk=root_id)
+        #별점 계산
+        game.star=game.star+((request.data.get('star')-game.star)/(game.review_cnt+1))
+        game.review_cnt=game.review_cnt+1
+        game.save()
 
         serializer = ReviewSerializer(data=request.data)
         if serializer.is_valid(raise_exception=True):
-            serializer.save(author=request.user, game=game,
-                            root=root)  # 데이터베이스에 저장(root가 none이면 댓글, 값이 있으면 대댓글)
+            serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -325,11 +308,21 @@ class ReviewAPIView(APIView):
 class ReviewDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    def get(self, request, review_id):
+        game_pk=request.data.get('game_pk')
+        review = Review.objects.all().filter(game=game_pk, pk=review_id)
+        serializer = ReviewSerializer(review)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
     def put(self, request, review_id):
         review = get_object_or_404(Review, pk=review_id)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
+            game_pk=request.data.get('game_pk')
+            game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
+            game.star=game.star+((request.data.get('star')-request.data.get('pre_star'))/(game.review_cnt))
+            game.save()
             serializer = ReviewSerializer(
                 review, data=request.data, partial=True)
             if serializer.is_valid(raise_exception=True):
@@ -344,8 +337,12 @@ class ReviewDetailAPIView(APIView):
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
+            game_pk=request.data.get('game_pk')
+            game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
+            game.star=game.star+((game.star-review.star)/(game.review_cnt-1))
+            game.review_cnt=game.review_cnt-1
+            game.save()
             review.is_visible = False
-            review.content = "삭제된 댓글입니다."
             review.save()
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
