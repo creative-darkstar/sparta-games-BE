@@ -60,6 +60,8 @@ INSTALLED_APPS = [
     'dj_rest_auth',
     'dj_rest_auth.registration',
     'rest_framework.authtoken',
+    'django_celery_results',  # Celery 태스크 결과 저장
+    'django_celery_beat',     # Celery Beat 스케줄러
 
     # Apps
     "accounts",
@@ -112,6 +114,23 @@ DATABASES = {
         'ENGINE': 'django.db.backends.sqlite3',
         'NAME': BASE_DIR / 'db.sqlite3',
     }
+}
+
+# Celery 브로커로 Django 데이터베이스 사용
+CELERY_BROKER_URL = 'django-db'
+CELERY_RESULT_BACKEND = 'django-db'
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+
+# Celery Beat 설정 (스케줄링)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
+
+CELERY_BEAT_SCHEDULE = {
+    'assign-chips-every-day': {
+        'task': 'games.tasks.assign_chips_to_top_games',
+        'schedule': timedelta(minutes=1),  # 매일 한 번 실행
+    },
 }
 
 # Auth User Model - Custom
