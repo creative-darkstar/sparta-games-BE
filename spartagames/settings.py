@@ -205,3 +205,8 @@ MEDIA_ROOT = BASE_DIR / "media"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None  # username 필드를 사용하지 않음
+ACCOUNT_EMAIL_REQUIRED = True  # 이메일을 필수로 요구
+ACCOUNT_USERNAME_REQUIRED = False  # username 필드를 사용하지 않음
+ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용

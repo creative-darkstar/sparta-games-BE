@@ -1,4 +1,5 @@
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 
 import rest_framework
@@ -31,24 +32,27 @@ class TokenException(Exception):
     pass
 
 
+from games.models import GameCategory
+
 # ---------- API---------- #
 class SignUpAPIView(APIView):
-    # 유효성 검사 정규식 패턴
-    USERNAME_PATTERN = re.compile(r'^[a-zA-Z0-9_]{4,20}$')
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
     def post(self, request):
-        username = request.data.get("username")
+        email = request.data.get("email")
         password = request.data.get("password")
         password_check = request.data.get("password_check")
-        email = request.data.get("email")
-
-        # username 유효성 검사
-        if not self.USERNAME_PATTERN.match(username):
-            return Response({"error_message":"올바른 username을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
-        elif get_user_model().objects.filter(username=username).exists():
-            return Response({"error_message":"이미 존재하는 username입니다."}, status=status.HTTP_400_BAD_REQUEST)
+        nickname = request.data.get("nickname")
+        game_category = request.data.getlist("game_category")
+        user_tech = request.data.get("user_tech")
+        is_maker = request.data.get("is_maker")
+        
+        # email 유효성 검사
+        if not self.EMAIL_PATTERN.match(email):
+            return Response({"error_message":"올바른 email을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        elif get_user_model().objects.filter(email=email).exists():
+            return Response({"error_message":"이미 존재하는 email입니다.."}, status=status.HTTP_400_BAD_REQUEST)
         
         # password 유효성 검사
         if not self.PASSWORD_PATTERN.match(password):
@@ -56,25 +60,35 @@ class SignUpAPIView(APIView):
         elif not password == password_check:
             return Response({"error_message":"암호를 확인해주세요."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # email 유효성 검사
-        if not self.EMAIL_PATTERN.match(email):
-            return Response({"error_message":"올바른 email을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
-        elif get_user_model().objects.filter(email=email).exists():
-            return Response({"error_message":"이미 존재하는 email입니다.."}, status=status.HTTP_400_BAD_REQUEST)
-        
+        # nickname 유효성 검사
+        if len(nickname) > 30:
+            return Response({"error_message":"닉네임은 30자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        elif len(nickname) == 0:
+            return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        elif get_user_model().objects.filter(nickname=nickname).exists():
+            return Response({"error_message":"이미 존재하는 username입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # DB에 유저 등록
         user = get_user_model().objects.create_user(
-            username = username,
+            email = email,
             password = password,
-            email = email
+            nickname = nickname,
+            user_tech = user_tech,
+            is_maker = is_maker,
         )
+
+        # 카테고리 가져오기
+        game_categories = GameCategory.objects.filter(name__in=game_category)
+        user.game_category.set(game_categories)  # ManyToManyField 값 설정
         
         return Response({
             "message":"회원가입 성공",
             "data":{
-                "username":user.username,
                 "email":user.email,
+                "nickname":user.nickname,
+                "game_category": game_category,
+                "user_tech": user_tech,
+                "is_maker": is_maker,
             },
         }, status=status.HTTP_201_CREATED)
 
@@ -110,8 +124,25 @@ def google_login_callback(request):
 
         username = profile_json.get('name', None)
         email = profile_json.get('email', None)
+
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="구글")
         
-        return social_signinup(email=email, username=username, provider="구글")
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -155,8 +186,25 @@ def naver_login_callback(request):
 
         username = profile_json.get('name', None)
         email = profile_json.get('email', None)
-        
-        return social_signinup(email=email, username=username, provider="네이버")
+
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="네이버")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -205,7 +253,25 @@ def kakao_login_callback(request):
         username = account["profile"]["nickname"]
         email = account["email"]
         
-        return social_signinup(email=email, username=username, provider="카카오")
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+                'account': account,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="카카오")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -255,7 +321,24 @@ def discord_login_callback(request):
         username = profile_json.get('username', None)
         email = profile_json.get('email', None)
         
-        return social_signinup(email=email, username=username, provider="디스코드")
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="디스코드")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -292,4 +375,6 @@ def login_page(request):
 
 
 def signup_page(request):
-    return render(request, 'accounts/signup.html')
+    email = request.GET.get('email', '')
+    username = request.GET.get('username', '')
+    return render(request, 'accounts/signup.html', {'email': email, 'username': username})
