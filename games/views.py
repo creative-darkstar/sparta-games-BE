@@ -350,6 +350,14 @@ class ReviewDetailAPIView(APIView):
 
 
 class CategoryAPIView(APIView):
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('post' or 'delete'):  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
+    
     def get(self, request):
         categories = GameCategory.objects.all()
         serializer = CategorySerailizer(categories, many=True)
