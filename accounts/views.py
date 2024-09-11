@@ -1,4 +1,5 @@
 from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.views.decorators.csrf import csrf_exempt
 
 import rest_framework
@@ -123,8 +124,25 @@ def google_login_callback(request):
 
         username = profile_json.get('name', None)
         email = profile_json.get('email', None)
+
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="구글")
         
-        return social_signinup(email=email, username=username, provider="구글")
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -168,8 +186,25 @@ def naver_login_callback(request):
 
         username = profile_json.get('name', None)
         email = profile_json.get('email', None)
-        
-        return social_signinup(email=email, username=username, provider="네이버")
+
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="네이버")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -218,7 +253,25 @@ def kakao_login_callback(request):
         username = account["profile"]["nickname"]
         email = account["email"]
         
-        return social_signinup(email=email, username=username, provider="카카오")
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+                'account': account,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="카카오")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -268,7 +321,24 @@ def discord_login_callback(request):
         username = profile_json.get('username', None)
         email = profile_json.get('email', None)
         
-        return social_signinup(email=email, username=username, provider="디스코드")
+        try:
+            user = get_user_model().objects.get(email=email)
+            token = RefreshToken.for_user(user)
+            data = {
+                'user': user,
+                'access': str(token.access_token),
+                'refresh': str(token),
+            }
+            serializer = JWTSerializer(data)
+            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'email': email,
+                'username': username,
+            }, status=status.HTTP_200_OK)
+        # return social_signinup(email=email, username=username, provider="디스코드")
+
     except AlertException as e:
         print(e)
         messages.error(request, e)
@@ -305,4 +375,6 @@ def login_page(request):
 
 
 def signup_page(request):
-    return render(request, 'accounts/signup.html')
+    email = request.GET.get('email', '')
+    username = request.GET.get('username', '')
+    return render(request, 'accounts/signup.html', {'email': email, 'username': username})
