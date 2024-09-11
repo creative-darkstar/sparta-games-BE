@@ -18,19 +18,19 @@ from rest_framework.decorators import permission_classes
 
 from .models import (
     Game,
-    Comment,
+    Like,
+    View,
+    Review,
     Screenshot,
-    Star,
-    Tag,
-    Star,
+    GameCategory,
 )
 from accounts.models import BotCnt
 from .serializers import (
     GameListSerializer,
     GameDetailSerializer,
-    CommentSerializer,
+    ReviewSerializer,
     ScreenshotSerializer,
-    TagSerailizer,
+    CategorySerailizer,
 )
 
 from django.conf import settings
@@ -56,7 +56,7 @@ class GameListAPIView(APIView):
     """
 
     def get(self, request):
-        tag_q = request.query_params.get('tag-q')
+        category_q = request.query_params.get('category-q')
         game_q = request.query_params.get('game-q')
         maker_q = request.query_params.get('maker-q')
         gm_q = request.query_params.get('gm-q')
@@ -64,8 +64,8 @@ class GameListAPIView(APIView):
         search = request.query_params.get('search')
 
         # 검색옵션 별 목록화
-        if tag_q:
-            rows = Game.objects.filter(tag__name__icontains=tag_q).filter(
+        if category_q:
+            rows = Game.objects.filter(category__name__icontains=category_q).filter(
                 is_visible=True, register_state=1)
         elif game_q:
             rows = Game.objects.filter(
@@ -83,7 +83,7 @@ class GameListAPIView(APIView):
         else:
             rows = Game.objects.filter(is_visible=True, register_state=1)
 
-        rows = rows.annotate(star=Round(Avg('stars__star'), 1))
+        rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
 
         # 추가 옵션 정렬
         if order == 'new':
@@ -121,10 +121,10 @@ class GameListAPIView(APIView):
         )
 
         # 태그 저장
-        tag_data = request.data.get('tag')
-        if tag_data:
-            for item in tag_data.split(','):
-                game.tag.add(Tag.objects.get(name=item))
+        category_data = request.data.get('category')
+        if category_data:
+            for item in category_data.split(','):
+                game.category.add(GameCategory.objects.get(name=item))
 
         # 이후 Screenshot model에 저장
         screenshots = list()
@@ -171,7 +171,7 @@ class GameDetailAPIView(APIView):
         game.view_cnt += 1  # 아티클 뷰수 조회
         game.save()  # 아티클 뷰수 조회
 
-        stars = list(game.stars.all().values('star'))
+        stars = list(game.reviews.all().values('star'))
         star_list = [d['star'] for d in stars]
         if len(star_list) == 0:
             star_score = None
@@ -185,12 +185,12 @@ class GameDetailAPIView(APIView):
         screenshots = Screenshot.objects.filter(game_id=game_pk)
         screenshot_serializer = ScreenshotSerializer(screenshots, many=True)
 
-        tags = game.tag.all()
-        tag_serializer = TagSerailizer(tags, many=True)
+        categories = game.category.all()
+        category_serializer = CategorySerailizer(categories, many=True)
 
         data["star_score"] = star_score
         data["screenshot"] = screenshot_serializer.data
-        data['tag'] = tag_serializer.data
+        data['category'] = category_serializer.data
 
         return Response(data, status=status.HTTP_200_OK)
 
@@ -213,12 +213,12 @@ class GameDetailAPIView(APIView):
             game.content = request.data.get("content", game.content)
             game.save()
 
-            tag_data = request.data.get('tag')
-            if tag_data is not None: # 태그가 바뀔 경우 기존 태그를 초기화, 신규 태그로 교체
-                game.tag.clear()
-                tags = [Tag.objects.get_or_create(name=item.strip())[
-                    0] for item in tag_data.split(',') if item.strip()]
-                game.tag.set(tags)
+            category_data = request.data.get('category')
+            if category_data is not None: # 태그가 바뀔 경우 기존 태그를 초기화, 신규 태그로 교체
+                game.category.clear()
+                categories = [GameCategory.objects.get_or_create(name=item.strip())[
+                    0] for item in category_data.split(',') if item.strip()]
+                game.category.set(categories)
 
             # 기존 데이터 삭제
             pre_screenshots_data = Screenshot.objects.filter(game=game)
@@ -264,32 +264,32 @@ class GameLikeAPIView(APIView):
             return Response({'message': "즐겨찾기"}, status=status.HTTP_200_OK)
 
 
-class GameStarAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+# class GameStarAPIView(APIView):
+#     permission_classes = [IsAuthenticated]
 
-    def post(self, request, game_pk):
-        star_list = [1,2,3,4,5]
-        star = int(request.data['star'])
-        if star not in star_list:
-            star = 5
-        game = get_object_or_404(Game, pk=game_pk)
-        if game.stars.filter(user=request.user).exists():
-            # 수정
-            game.stars.filter(user=request.user).update(
-                star=star)
-        else:
-            # 생성
-            Star.objects.create(
-                star=star,
-                user=request.user,
-                game=game,
-            )
-        star_values=[item['star'] for item in game.stars.values()]
-        average_star = round(sum(star_values) / len(star_values),1)
-        return Response({"res":"ok","avg_star":average_star}, status=status.HTTP_200_OK)
+#     def post(self, request, game_pk):
+#         star_list = [1,2,3,4,5]
+#         star = int(request.data['star'])
+#         if star not in star_list:
+#             star = 5
+#         game = get_object_or_404(Game, pk=game_pk)
+#         if game.stars.filter(user=request.user).exists():
+#             # 수정
+#             game.stars.filter(user=request.user).update(
+#                 star=star)
+#         else:
+#             # 생성
+#             Star.objects.create(
+#                 star=star,
+#                 user=request.user,
+#                 game=game,
+#             )
+#         star_values=[item['star'] for item in game.stars.values()]
+#         average_star = round(sum(star_values) / len(star_values),1)
+#         return Response({"res":"ok","avg_star":average_star}, status=status.HTTP_200_OK)
 
 
-class CommentAPIView(APIView):
+class ReviewAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
@@ -299,8 +299,8 @@ class CommentAPIView(APIView):
         return permissions
 
     def get(self, request, game_pk):
-        comments = Comment.objects.all().filter(game=game_pk, root__isnull=True)
-        serializer = CommentSerializer(comments, many=True)
+        reviews = Review.objects.all().filter(game=game_pk, root__isnull=True)
+        serializer = ReviewSerializer(reviews, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request, game_pk):
@@ -312,9 +312,9 @@ class CommentAPIView(APIView):
 
         # root_id가 있으면 대댓글의 root를 설정
         if root_id:
-            root = get_object_or_404(Comment, pk=root_id)
+            root = get_object_or_404(Review, pk=root_id)
 
-        serializer = CommentSerializer(data=request.data)
+        serializer = ReviewSerializer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game,
                             root=root)  # 데이터베이스에 저장(root가 none이면 댓글, 값이 있으면 대댓글)
@@ -322,16 +322,16 @@ class CommentAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-class CommentDetailAPIView(APIView):
+class ReviewDetailAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def put(self, request, comment_id):
-        comment = get_object_or_404(Comment, pk=comment_id)
+    def put(self, request, review_id):
+        review = get_object_or_404(Review, pk=review_id)
 
         # 작성한 유저이거나 관리자일 경우 동작함
-        if request.user == comment.author or request.user.is_staff == True:
-            serializer = CommentSerializer(
-                comment, data=request.data, partial=True)
+        if request.user == review.author or request.user.is_staff == True:
+            serializer = ReviewSerializer(
+                review, data=request.data, partial=True)
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -339,29 +339,29 @@ class CommentDetailAPIView(APIView):
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
 
-    def delete(self, request, comment_id):
-        comment = get_object_or_404(Comment, pk=comment_id)
+    def delete(self, request, review_id):
+        review = get_object_or_404(Review, pk=review_id)
 
         # 작성한 유저이거나 관리자일 경우 동작함
-        if request.user == comment.author or request.user.is_staff == True:
-            comment.is_visible = False
-            comment.content = "삭제된 댓글입니다."
-            comment.save()
+        if request.user == review.author or request.user.is_staff == True:
+            review.is_visible = False
+            review.content = "삭제된 댓글입니다."
+            review.save()
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
 
 
-class TagAPIView(APIView):
+class CategoryAPIView(APIView):
     def get(self, request):
-        tags = Tag.objects.all()
-        serializer = TagSerailizer(tags, many=True)
+        categories = GameCategory.objects.all()
+        serializer = CategorySerailizer(categories, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def post(self, request):
         if request.user.is_staff is False:
             return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = TagSerailizer(data=request.data)
+        serializer = CategorySerailizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             return Response({"message": "태그를 추가했습니다"}, status=status.HTTP_200_OK)
@@ -369,8 +369,8 @@ class TagAPIView(APIView):
     def delete(self, request):
         if request.user.is_staff is False:
             return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
-        tag = get_object_or_404(Tag, pk=request.data['pk'])
-        tag.delete()
+        category = get_object_or_404(GameCategory, pk=request.data['pk'])
+        category.delete()
         return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -439,9 +439,9 @@ def game_register(request, game_pk):
         '<div id="unity-container"', '<div id="unity-container" style="width: 100%; height: 100%; overflow: hidden;"')
 
     # </body> 태그 전에 추가할 스크립트 삽입
-    body_close_tag_index = new_lines.find('</body>')
-    new_lines = new_lines[:body_close_tag_index] + \
-        additional_script + new_lines[body_close_tag_index:]
+    body_close_category_index = new_lines.find('</body>')
+    new_lines = new_lines[:body_close_category_index] + \
+        additional_script + new_lines[body_close_category_index:]
 
     # 덮어쓰기
     with open(f'{game_folder_path}/index.html', 'w') as f:
@@ -522,13 +522,13 @@ def ChatbotAPIView(request):
     usage.save()
 
     input_data = request.data.get('input_data')
-    taglist = list(Tag.objects.values_list('name', flat=True))
+    categorylist = list(GameCategory.objects.values_list('name', flat=True))
     
     # GPT API와 통신을 통해 답장을 받아온다.(아래 형식을 따라야함)(추가 옵션은 문서를 참고)
     instructions = f"""
-    내가 제한한 태그 목록 : {taglist} 여기서만 이야기를 해줘, 이외에는 말하지마
+    내가 제한한 카테고리 목록 : {categorylist} 여기서만 이야기를 해줘, 이외에는 말하지마
     받은 내용을 요약해서 내가 제한한 목록에서 제일 관련 있는 항목 한 개를 골라줘
-    결과 형식은 다른 말은 없이 꾸미지도 말고 딱! '태그:'라는 형식으로만 작성해줘
+    결과 형식은 다른 말은 없이 꾸미지도 말고 딱! '카테고리:'라는 형식으로만 작성해줘
     결과에 특수문자, 이모티콘 붙이지마
     """
     completion = CLIENT.chat.completions.create(
@@ -541,58 +541,58 @@ def ChatbotAPIView(request):
 
     # 응답받은 데이터 처리
     gpt_response = completion.choices[0].message.content
-    about_tag = gpt_response.split('태그:')[1]
-    about_tag = re.sub(
-        '[-=+,#/\?:^.@*\"※~ㆍ!』‘|\(\)\[\]`\'…》\”\“\’·]', '', about_tag)
-    about_tag = about_tag.strip()
-    untaglist = ['없음', '']
-    if about_tag in untaglist:
-        about_tag = '없음'
-    return Response({"tag": about_tag}, status=status.HTTP_200_OK)
+    about_category = gpt_response.split('태그:')[1]
+    about_category = re.sub(
+        '[-=+,#/\?:^.@*\"※~ㆍ!』‘|\(\)\[\]`\'…》\”\“\’·]', '', about_category)
+    about_category = about_category.strip()
+    uncategorylist = ['없음', '']
+    if about_category in uncategorylist:
+        about_category = '없음'
+    return Response({"category": about_category}, status=status.HTTP_200_OK)
 
 
 # ---------- Web ---------- #
 
 
-# 게임 등록 Api 테스트용 페이지 렌더링
-def game_detail_view(request, game_pk):
-    return render(request, "games/game_detail.html", {'game_pk': game_pk})
+# # 게임 등록 Api 테스트용 페이지 렌더링
+# def game_detail_view(request, game_pk):
+#     return render(request, "games/game_detail.html", {'game_pk': game_pk})
 
 
-# 테스트용 base.html 렌더링
-def test_base_view(request):
-    return render(request, "base.html")
+# # 테스트용 base.html 렌더링
+# def test_base_view(request):
+#     return render(request, "base.html")
 
 
-# 테스트용 메인 페이지 렌더링
-def main_view(request):
-    return render(request, "games/main.html")
+# # 테스트용 메인 페이지 렌더링
+# def main_view(request):
+#     return render(request, "games/main.html")
 
 
-# 테스트용 검색 페이지 렌더링
-def search_view(request):
-    # 쿼리스트링을 그대로 가져다가 '게임 목록 api' 호출
-    return render(request, "games/search.html")
+# # 테스트용 검색 페이지 렌더링
+# def search_view(request):
+#     # 쿼리스트링을 그대로 가져다가 '게임 목록 api' 호출
+#     return render(request, "games/search.html")
 
 
-# 게임 검수용 페이지 뷰
-def admin_list(request):
-    rows = Game.objects.filter(is_visible=True, register_state=0)
-    return render(request, "games/admin_list.html", context={"rows": rows})
+# # 게임 검수용 페이지 뷰
+# def admin_list(request):
+#     rows = Game.objects.filter(is_visible=True, register_state=0)
+#     return render(request, "games/admin_list.html", context={"rows": rows})
 
 
-def admin_tag(request):
-    tags = Tag.objects.all()
-    return render(request, "games/admin_tags.html", context={"tags": tags})
+# def admin_category(request):
+#     categories = GameCategory.objects.all()
+#     return render(request, "games/admin_tags.html", context={"categories": categories})
 
 
-def game_create_view(request):
-    return render(request, "games/game_create.html")
+# def game_create_view(request):
+#     return render(request, "games/game_create.html")
 
 
-def game_update_view(request, game_pk):
-    return render(request, "games/game_update.html", {'game_pk': game_pk})
+# def game_update_view(request, game_pk):
+#     return render(request, "games/game_update.html", {'game_pk': game_pk})
 
 
-def chatbot_view(request):
-    return render(request, "games/chatbot.html")
+# def chatbot_view(request):
+#     return render(request, "games/chatbot.html")

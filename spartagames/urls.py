@@ -24,13 +24,14 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     # ---------- Include ---------- #
     path('accounts/', include('accounts.urls')),
+    path('oauth/', include('allauth.urls')),
     path('users/', include('users.urls')),
     path('games/', include('games.urls')),
     path('qnas/', include('qnas.urls')),
 
     # ---------- Web ---------- #
-    path('', views.main_view, name='main_view'),
-    path('search/', views.search_view, name='search_view'),
+    # path('', views.main_view, name='main_view'),
+    # path('search/', views.search_view, name='search_view'),
 ]
 
 if settings.DEBUG:
