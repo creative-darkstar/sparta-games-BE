@@ -15,73 +15,110 @@ class ProfileAPIView(APIView):
 
     # 유효성 검사 정규식 패턴
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{8,30}$")
 
     def get(self, request, user_pk):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
         profile_image = user.image.url if user.image else ''
+        categories = list(user.game_category.values_list('user_pk', flat=True))
         return Response({
-            "username": user.username,
             "user_pk": user_pk,
-            "profile_image": profile_image,
+            "username": user.username,
             "email": user.email,
+            "nickname": user.nickname,
+            "login_type": user.login_type,
+            "profile_image": profile_image,
             "is_staff": user.is_staff,
+            "is_maker": user.is_maker,
+            "introduce": user.introduce,
+            "game_category": categories,
+            "user_tech": user.user_tech
         }, status=status.HTTP_200_OK)
 
     def put(self, request, user_pk):
-        check_password = self.request.data.get("password")
+        # check_password = self.request.data.get("password")
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
 
         # 현재 로그인한 유저와 수정 대상 회원이 일치하는지 확인
         if request.user.id != user.pk:
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        # 유저 비밀번호가 일치하지 않으면
-        if user.check_password(check_password) is False:
-            return Response(
-                {"message": "비밀번호가 일치하지 않습니다."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # # 유저 비밀번호가 일치하지 않으면
+        # if user.check_password(check_password) is False:
+        #     return Response(
+        #         {"message": "비밀번호가 일치하지 않습니다."},
+        #         status=status.HTTP_400_BAD_REQUEST
+        #     )
 
-        # 이메일 검증
-        email = self.request.data.get('email', user.email)
+        # 닉네임 검증
+        nickname = self.request.data.get('nickname', user.nickname)
         # email 수정을 하지 않았을 경우 문제 없이 pass
-        if email == user.email:
+        if nickname == user.nickname:
             pass
-        # 이메일이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
-        elif not self.EMAIL_PATTERN.match(email):
-            return Response({"error_message": "올바른 email을 입력해주세요."})
-        elif get_user_model().objects.filter(email=email).exists():
-            return Response({"error_message": "이미 존재하는 email입니다.."})
+        # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
+        elif not self.NICKNAME_PATTERN.match(nickname):
+            return Response({"error_message": "올바른 nickname을 입력해주세요."})
+        elif get_user_model().objects.filter(nickname=nickname).exists():
+            return Response({"error_message": "이미 존재하는 nickname입니다."})
+        
+        # 관심 게임 카테고리
+        
+        # 관심 기술분야
+        
+        # # 이메일 검증
+        # email = self.request.data.get('email', user.email)
+        # # email 수정을 하지 않았을 경우 문제 없이 pass
+        # if email == user.email:
+        #     pass
+        # # 이메일이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
+        # elif not self.EMAIL_PATTERN.match(email):
+        #     return Response({"error_message": "올바른 email을 입력해주세요."})
+        # elif get_user_model().objects.filter(email=email).exists():
+        #     return Response({"error_message": "이미 존재하는 email입니다.."})
 
-        user.email = email
+        # 닉네임
+        user.nickname = nickname
+        # 프로필 이미지
         user.image = self.request.data.get('image', user.image)
+        # 유저 / 메이커 구분
+        user.is_maker = self.request.data.get('is_maker', user.is_maker)
+        # 자기소개
+        user.introduce = self.request.data.get('introduce', user.introduce)
+        
+        # 변경한 데이터 저장
         user.save()
 
+        categories = list(user.game_category.values_list('user_pk', flat=True))
         return Response(
             {
                 "message": "회원 정보 수정 완료",
                 "data": {
-                    "email": user.email,
-                    "image": user.image.url if user.image else "이미지 없음"
+                    "nickname": user.nickname,
+                    "profile_image": user.image.url if user.image else "이미지 없음",
+                    "is_staff": user.is_staff,
+                    "is_maker": user.is_maker,
+                    "introduce": user.introduce,
+                    "game_category": categories,
+                    "user_tech": user.user_tech
                 }
             },
             status=status.HTTP_202_ACCEPTED
         )
 
     def delete(self, request, user_pk):
-        check_password = self.request.data.get("password")
+        # check_password = self.request.data.get("password")
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
 
         # 현재 로그인한 유저와 탈퇴 대상 회원이 일치하는지 확인
         if request.user.id != user.pk:
             return Response(status=status.HTTP_403_FORBIDDEN)
 
-        # 유저 비밀번호가 일치하지 않으면
-        if user.check_password(check_password) is False:
-            return Response(
-                {"message": "비밀번호가 일치하지 않습니다."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # # 유저 비밀번호가 일치하지 않으면
+        # if user.check_password(check_password) is False:
+        #     return Response(
+        #         {"message": "비밀번호가 일치하지 않습니다."},
+        #         status=status.HTTP_400_BAD_REQUEST
+        #     )
 
         # 유저 비밀번호가 일치한다면
         user.is_active = False
@@ -144,6 +181,7 @@ def my_games(request, user_pk):
     item_list = list()
     for item in my_games:
         category_list = list(item.category.values_list('name', flat=True))
+        chip_list = list(item.chip.values_list('name', flat=True))
         item_list.append({
             "game_pk": item.pk,
             "title": item.title,
@@ -151,6 +189,9 @@ def my_games(request, user_pk):
             "register_state": item.register_state,
             "created_at": item.created_at,
             "category_list": category_list,
+            "chip_list": chip_list,
+            "star": item.star,
+            "review_cnt": item.review_cnt
         })
 
     return Response({
@@ -161,22 +202,26 @@ def my_games(request, user_pk):
 @api_view(["GET"])
 def like_games(request, user_pk):
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
-    like_games = user.games_like.filter(is_visible=True, register_state=1)
+    like_games = user.like_games.filter(is_visible=True, register_state=1)
 
     item_list = list()
     for item in like_games:
         category_list = list(item.category.values_list('name', flat=True))
+        chip_list = list(item.chip.values_list('name', flat=True))
         item_list.append({
             "game_pk": item.pk,
             "title": item.title,
             "maker_info": {
                 "pk": item.maker.pk,
-                "name": item.maker.username,
+                "nickname": item.maker.nickname,
             },
             "thumbnail": item.thumbnail.url if item.thumbnail else None,
             "register_state": item.register_state,
             "created_at": item.created_at,
             "category_list": category_list,
+            "chip_list": chip_list,
+            "star": item.star,
+            "review_cnt": item.review_cnt
         })
 
     return Response({
@@ -185,5 +230,5 @@ def like_games(request, user_pk):
 
 
 # ---------- Web---------- #
-def profile_page(request, user_pk):
-    return render(request, 'users/profile_page.html')
+# def profile_page(request, user_pk):
+#     return render(request, 'users/profile_page.html')
