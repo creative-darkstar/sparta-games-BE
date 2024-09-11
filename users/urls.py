@@ -12,5 +12,5 @@ urlpatterns = [
     path("api/<int:user_pk>/likes/", views.like_games, name="like_games"),
     
     # ---------- Web---------- #
-    path("<int:user_pk>/", views.profile_page, name='profile_page'),
+    # path("<int:user_pk>/", views.profile_page, name='profile_page'),
 ]
