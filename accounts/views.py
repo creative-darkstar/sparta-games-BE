@@ -1,25 +1,21 @@
-from django.shortcuts import redirect, render
-from django.urls import reverse
-from django.views.decorators.csrf import csrf_exempt
+import secrets
+from django.shortcuts import render
 
-import rest_framework
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
 
-from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
-from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
-from dj_rest_auth import views
-from dj_rest_auth.registration.views import SocialLoginView
 from dj_rest_auth.serializers import JWTSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib import messages
-from django.contrib.auth import get_user_model, login
+from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import PBKDF2PasswordHasher
 import re
 import requests
+import urllib.parse
 from rest_framework import status
 from spartagames import config
 
@@ -99,10 +95,11 @@ def google_login_callback(request):
     # Authorization code를 token으로 전환
     try:
         authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        decoded_code = urllib.parse.unquote(authorization_code)
         url = "https://oauth2.googleapis.com/token"
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         data = {
-            "code": authorization_code,
+            "code": decoded_code,
             "client_id": config.GOOGLE_AUTH["client_id"],
             "client_secret": config.GOOGLE_AUTH["client_secret"],
             "redirect_uri": config.GOOGLE_AUTH["redirect_uri"],
@@ -122,7 +119,6 @@ def google_login_callback(request):
         profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={id_token}')
         profile_json = profile_request.json()
 
-        username = profile_json.get('name', None)
         email = profile_json.get('email', None)
 
         try:
@@ -139,7 +135,6 @@ def google_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="구글")
         
