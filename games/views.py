@@ -83,7 +83,7 @@ class GameListAPIView(APIView):
         else:
             rows = Game.objects.filter(is_visible=True, register_state=1)
 
-        rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
+        #rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
 
         # 추가 옵션 정렬
         if order == 'new':
@@ -306,11 +306,16 @@ class ReviewAPIView(APIView):
 
 
 class ReviewDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
 
     def get(self, request, review_id):
-        game_pk=request.data.get('game_pk')
-        review = Review.objects.all().filter(game=game_pk, pk=review_id)
+        review = Review.objects.get(pk=review_id)
         serializer = ReviewSerializer(review)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -339,7 +344,10 @@ class ReviewDetailAPIView(APIView):
         if request.user == review.author or request.user.is_staff == True:
             game_pk=request.data.get('game_pk')
             game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-            game.star=game.star+((game.star-review.star)/(game.review_cnt-1))
+            if game.review_cnt >1:
+                game.star=game.star+((game.star-review.star)/(game.review_cnt-1))
+            else:
+                game.star=0
             game.review_cnt=game.review_cnt-1
             game.save()
             review.is_visible = False
