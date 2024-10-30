@@ -8,6 +8,8 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from games.models import GameCategory
+
 
 # ---------- API---------- #
 class ProfileAPIView(APIView):
@@ -23,7 +25,6 @@ class ProfileAPIView(APIView):
         categories = list(user.game_category.values_list('user_pk', flat=True))
         return Response({
             "user_pk": user_pk,
-            "username": user.username,
             "email": user.email,
             "nickname": user.nickname,
             "login_type": user.login_type,
@@ -57,13 +58,26 @@ class ProfileAPIView(APIView):
             pass
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
         elif not self.NICKNAME_PATTERN.match(nickname):
-            return Response({"error_message": "올바른 nickname을 입력해주세요."})
+            return Response(
+                {"error_message": "올바른 nickname을 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         elif get_user_model().objects.filter(nickname=nickname).exists():
-            return Response({"error_message": "이미 존재하는 nickname입니다."})
+            return Response(
+                {"error_message": "이미 존재하는 nickname입니다."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # 관심 게임 카테고리
+        categories = request.data.getlist("game_category", None)
+        if categories:
+            game_categories = GameCategory.objects.filter(name__in=categories)
+            user.game_category.set(game_categories)
+        else:
+            categories = list(user.game_category.values_list('user_pk', flat=True))
         
         # 관심 기술분야
+        user.user_tech = self.request.data.get('user_tech', user.user_tech)
         
         # # 이메일 검증
         # email = self.request.data.get('email', user.email)
@@ -131,6 +145,31 @@ class ProfileAPIView(APIView):
         )
 
 
+@api_view(["GET"])
+def check_nickname(request):
+    # 유효성 검사 정규식 패턴
+    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{8,30}$")
+
+    nickname = request.data.get('nickname', None)
+        
+    # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
+    if not NICKNAME_PATTERN.match(nickname):
+        return Response(
+            {"error_message": "올바른 nickname을 입력해주세요."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    elif get_user_model().objects.filter(nickname=nickname).exists():
+        return Response(
+            {"error_message": "이미 존재하는 nickname입니다."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    else:
+        return Response(
+            {"message": "사용 가능한 닉네임입니다."},
+            status=status.HTTP_200_OK
+        )
+
+
 @api_view(["PUT"])
 def change_password(request, user_pk):
     # 유효성 검사 정규식 패턴
@@ -155,9 +194,15 @@ def change_password(request, user_pk):
 
     # new password 유효성 검사
     if not PASSWORD_PATTERN.match(new_password):
-        return Response({"error_message": "올바른 password와 password_check를 입력해주세요."})
+        return Response(
+            {"error_message": "올바른 password와 password_check를 입력해주세요."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
     elif not new_password == new_password_check:
-        return Response({"error_message": "동일한 password와 password_check를 입력해주세요."})
+        return Response(
+            {"error_message": "동일한 password와 password_check를 입력해주세요."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
 
     # 유저 비밀번호가 일치한다면
     user.set_password(new_password)
@@ -166,7 +211,7 @@ def change_password(request, user_pk):
         {
             "message": f"비밀번호 수정 완료 (회원 아이디: {user.username})"
         },
-        status=status.HTTP_200_OK
+        status=status.HTTP_202_ACCEPTED
     )
 
 @api_view(["GET"])
