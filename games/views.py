@@ -23,6 +23,7 @@ from .models import (
     Review,
     Screenshot,
     GameCategory,
+    ReviewsLike,
 )
 from accounts.models import BotCnt
 from .serializers import (
@@ -288,16 +289,28 @@ class ReviewAPIView(APIView):
 
     def get(self, request, game_pk):
         reviews = Review.objects.all().filter(game=game_pk)
-        my_review = reviews.filter(author__pk=request.user.pk)
-        reviews_serializer = ReviewSerializer(reviews, many=True)
-        my_review_serializer = ReviewSerializer(my_review)
-        return Response(
-            {
-                "my_review": my_review_serializer.data,
-                "all_reviews": reviews_serializer.data
-            },
-            status=status.HTTP_200_OK
-        )
+        
+        # 로그인한 경우
+        if request.user.is_authenticated:
+            reviews_serializer = ReviewSerializer(reviews, many=True, context={'user': request.user})
+            my_review = reviews.get(author__pk=request.user.pk)
+            my_review_serializer = ReviewSerializer(my_review, context={'user': request.user})
+            return Response(
+                {
+                    "my_review": my_review_serializer.data,
+                    "all_reviews": reviews_serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        # 로그인하지 않은 경우
+        else:
+            reviews_serializer = ReviewSerializer(reviews, many=True)
+            return Response(
+                {
+                    "all_reviews": reviews_serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
@@ -311,7 +324,7 @@ class ReviewAPIView(APIView):
         game.review_cnt=game.review_cnt+1
         game.save()
 
-        serializer = ReviewSerializer(data=request.data)
+        serializer = ReviewSerializer(data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -329,7 +342,7 @@ class ReviewDetailAPIView(APIView):
 
     def get(self, request, review_id):
         review = Review.objects.get(pk=review_id)
-        serializer = ReviewSerializer(review)
+        serializer = ReviewSerializer(review, context={'user': request.user})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request, review_id):
@@ -342,7 +355,7 @@ class ReviewDetailAPIView(APIView):
             game.star=game.star+((request.data.get('star')-request.data.get('pre_star'))/(game.review_cnt))
             game.save()
             serializer = ReviewSerializer(
-                review, data=request.data, partial=True)
+                review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -368,6 +381,37 @@ class ReviewDetailAPIView(APIView):
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+def toggle_review_like(request, review_id):
+    """
+    리뷰에 좋아요/싫어요 동작
+    """
+    user = request.user
+    review = get_object_or_404(Review, id=review_id)
+
+    # ReviewsLike 객체를 가져오거나 새로 생성
+    # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
+    review_like, _ = ReviewsLike.objects.get_or_create(user=user, review=review)
+
+    # 요청에서 받은 'action'에 따라 상태 변경
+    action = request.data.get('action', None)
+    if action == 'like':
+        if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
+            review_like.is_like = 1
+        else:
+            # 이미 'like' 상태일 경우 'no state'로 전환
+            review_like.is_like = 0
+    elif action == 'dislike':
+        if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
+            review_like.is_like = 2
+        else:
+            # 이미 'dislike' 상태일 경우 'no state'로 전환
+            review_like.is_like = 0
+
+    review_like.save()  # 변경 사항 저장
+    return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
 
 
 class CategoryAPIView(APIView):
