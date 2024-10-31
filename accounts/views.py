@@ -40,7 +40,8 @@ class SignUpAPIView(APIView):
         password = request.data.get("password")
         password_check = request.data.get("password_check")
         nickname = request.data.get("nickname")
-        game_category = request.data.getlist("game_category")
+        # game_category = request.data.getlist("game_category")
+        game_category = request.data.get("game_category",[])
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
