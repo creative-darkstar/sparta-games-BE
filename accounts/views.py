@@ -179,7 +179,6 @@ def naver_login_callback(request):
         profile_request = requests.get(url, headers=headers)
         profile_json = profile_request.json().get("response", None)
 
-        username = profile_json.get('name', None)
         email = profile_json.get('email', None)
 
         try:
@@ -191,12 +190,14 @@ def naver_login_callback(request):
                 'refresh': str(token),
             }
             serializer = JWTSerializer(data)
-            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({
+                'message': '소셜 로그인 성공, 기존 회원입니다.',
+                **serializer.data
+                }, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="네이버")
 
