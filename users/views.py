@@ -69,7 +69,7 @@ class ProfileAPIView(APIView):
             )
         
         # 관심 게임 카테고리
-        categories = request.data.getlist("game_category", None)
+        categories = request.data.get("game_category", [])
         if categories:
             game_categories = GameCategory.objects.filter(name__in=categories)
             user.game_category.set(game_categories)
@@ -143,6 +143,12 @@ class ProfileAPIView(APIView):
             },
             status=status.HTTP_200_OK
         )
+
+
+@api_view(["GET"])
+def user_tech_list(request):
+    techs = get_user_model().USER_TECH_CHOICES
+    return Response(techs, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])

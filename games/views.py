@@ -288,12 +288,25 @@ class ReviewAPIView(APIView):
 
     def get(self, request, game_pk):
         reviews = Review.objects.all().filter(game=game_pk)
-        serializer = ReviewSerializer(reviews, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        my_review = reviews.filter(author__pk=request.user.pk)
+        reviews_serializer = ReviewSerializer(reviews, many=True)
+        my_review_serializer = ReviewSerializer(my_review)
+        return Response(
+            {
+                "my_review": my_review_serializer.data,
+                "all_reviews": reviews_serializer.data
+            },
+            status=status.HTTP_200_OK
+        )
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-        #별점 계산
+        
+        # 이미 리뷰를 작성한 사용자인 경우 등록 거부
+        if game.reviews.filter(author__pk=request.user.pk):
+            return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # 별점 계산
         game.star=game.star+((request.data.get('star')-game.star)/(game.review_cnt+1))
         game.review_cnt=game.review_cnt+1
         game.save()
@@ -381,6 +394,10 @@ class CategoryAPIView(APIView):
 
 @api_view(['POST'])
 def game_register(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    
     # game_pk에 해당하는 row 가져오기 (게시 중인 상태이면서 '등록 중' 상태)
     row = get_object_or_404(
         Game, pk=game_pk, is_visible=True, register_state=0)
@@ -466,20 +483,32 @@ def game_register(request, game_pk):
 
     # 알맞은 HTTP Response 리턴
     # return Response({"message": f"등록을 성공했습니다. (게시물 id: {game_pk})"}, status=status.HTTP_200_OK)
+    
+    # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     return redirect("games:admin_list")
 
 
 @api_view(['POST'])
 def game_register_deny(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    
     row = get_object_or_404(
         Game, pk=game_pk, is_visible=True, register_state=0)
     row.register_state = 2
     row.save()
+    
+    # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     return redirect("games:admin_list")
 
 
 @api_view(['POST'])
 def game_dzip(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    
     row = get_object_or_404(
         Game, pk=game_pk, register_state=0, is_visible=True)
     zip_path = row.gamefile.url
