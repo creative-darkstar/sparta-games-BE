@@ -25,6 +25,6 @@ urlpatterns = [
     path("api/discord/callback/", views.discord_login_callback, name='discord_callback'),
 
     # ---------- Web---------- #
-    path('login/', views.login_page, name='login_page'),
-    path('signup/', views.signup_page, name='signup_page'),
+    #path('login/', views.login_page, name='login_page'),
+    #path('signup/', views.signup_page, name='signup_page'),
 ]

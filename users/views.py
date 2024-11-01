@@ -22,7 +22,7 @@ class ProfileAPIView(APIView):
     def get(self, request, user_pk):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
         profile_image = user.image.url if user.image else ''
-        categories = list(user.game_category.values_list('user_pk', flat=True))
+        categories = list(user.game_category.values_list('pk', flat=True))
         return Response({
             "user_pk": user_pk,
             "email": user.email,
@@ -74,7 +74,7 @@ class ProfileAPIView(APIView):
             game_categories = GameCategory.objects.filter(name__in=categories)
             user.game_category.set(game_categories)
         else:
-            categories = list(user.game_category.values_list('user_pk', flat=True))
+            categories = list(user.game_category.values_list('pk', flat=True))
         
         # 관심 기술분야
         user.user_tech = self.request.data.get('user_tech', user.user_tech)
@@ -102,7 +102,7 @@ class ProfileAPIView(APIView):
         # 변경한 데이터 저장
         user.save()
 
-        categories = list(user.game_category.values_list('user_pk', flat=True))
+        categories = list(user.game_category.values_list('pk', flat=True))
         return Response(
             {
                 "message": "회원 정보 수정 완료",
@@ -139,7 +139,7 @@ class ProfileAPIView(APIView):
         user.save()
         return Response(
             {
-                "message": f"회원 탈퇴 완료 (회원 아이디: {user.username})"
+                "message": f"회원 탈퇴 완료 (회원 아이디: {user.nickname})"
             },
             status=status.HTTP_200_OK
         )
@@ -215,7 +215,7 @@ def change_password(request, user_pk):
     user.save()
     return Response(
         {
-            "message": f"비밀번호 수정 완료 (회원 아이디: {user.username})"
+            "message": f"비밀번호 수정 완료 (회원 아이디: {user.nickname})"
         },
         status=status.HTTP_202_ACCEPTED
     )
@@ -253,26 +253,27 @@ def my_games(request, user_pk):
 @api_view(["GET"])
 def like_games(request, user_pk):
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
-    like_games = user.like_games.filter(is_visible=True, register_state=1)
+    like_games = user.like_games.filter(game__is_visible=True, game__register_state=1)
 
     item_list = list()
     for item in like_games:
-        category_list = list(item.category.values_list('name', flat=True))
-        chip_list = list(item.chip.values_list('name', flat=True))
+        game = item.game  # Like 인스턴스의 game 필드를 통해 Game 객체에 접근
+        category_list = list(game.category.values_list('name', flat=True))
+        chip_list = list(game.chip.values_list('name', flat=True))
         item_list.append({
-            "game_pk": item.pk,
-            "title": item.title,
+            "game_pk": game.pk,
+            "title": game.title,
             "maker_info": {
-                "pk": item.maker.pk,
-                "nickname": item.maker.nickname,
+                "pk": game.maker.pk,
+                "nickname": game.maker.nickname,
             },
-            "thumbnail": item.thumbnail.url if item.thumbnail else None,
-            "register_state": item.register_state,
-            "created_at": item.created_at,
+            "thumbnail": game.thumbnail.url if game.thumbnail else None,
+            "register_state": game.register_state,
+            "created_at": game.created_at,
             "category_list": category_list,
             "chip_list": chip_list,
-            "star": item.star,
-            "review_cnt": item.review_cnt
+            "star": game.star,
+            "review_cnt": game.review_cnt
         })
 
     return Response({

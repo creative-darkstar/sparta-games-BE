@@ -63,7 +63,7 @@ class SignUpAPIView(APIView):
         elif len(nickname) == 0:
             return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(nickname=nickname).exists():
-            return Response({"error_message":"이미 존재하는 username입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # DB에 유저 등록
         user = get_user_model().objects.create_user(
@@ -247,7 +247,7 @@ def kakao_login_callback(request):
         profile_json = profile_request.json()
         
         account = profile_json.get('kakao_account', None)
-        username = account["profile"]["nickname"]
+        nickname = account["profile"]["nickname"]
         email = account["email"]
         
         try:
@@ -264,7 +264,7 @@ def kakao_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
+                'nickname': nickname,
                 'account': account,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="카카오")
@@ -315,7 +315,7 @@ def discord_login_callback(request):
         profile_request = requests.get(url, headers=headers)
         profile_json = profile_request.json()
         
-        username = profile_json.get('username', None)
+        nickname = profile_json.get('username', None)
         email = profile_json.get('email', None)
         
         try:
@@ -332,7 +332,7 @@ def discord_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
+                'nickname': nickname,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="디스코드")
 
@@ -367,11 +367,11 @@ def social_signinup(email, username, provider=''):
 
 
 # ---------- Web---------- #
-def login_page(request):
-    return render(request, 'accounts/login.html')
+# def login_page(request):
+#     return render(request, 'accounts/login.html')
 
 
-def signup_page(request):
-    email = request.GET.get('email', '')
-    username = request.GET.get('username', '')
-    return render(request, 'accounts/signup.html', {'email': email, 'username': username})
+# def signup_page(request):
+#     email = request.GET.get('email', '')
+#     username = request.GET.get('username', '')
+#     return render(request, 'accounts/signup.html', {'email': email, 'username': username})
