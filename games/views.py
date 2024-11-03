@@ -3,7 +3,7 @@ import os
 import zipfile
 
 from django.core.files.storage import FileSystemStorage
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django.shortcuts import render, get_object_or_404, redirect
 from django.db.models import Avg, Q
 from django.db.models.functions import Round
@@ -292,13 +292,16 @@ class ReviewAPIView(APIView):
         return permissions
 
     def get(self, request, game_pk):
-        reviews = Review.objects.all().filter(game=game_pk)
+        reviews = Review.objects.all().filter(game=game_pk, is_visible=True)
+
+        if not reviews.exists():
+            return Response({"message": "해당 게임에 리뷰가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 로그인한 경우
         if request.user.is_authenticated:
             reviews_serializer = ReviewSerializer(
                 reviews, many=True, context={'user': request.user})
-            my_review = reviews.get(author__pk=request.user.pk)
+            my_review = reviews.filter(author__pk=request.user.pk).first()
             my_review_serializer = ReviewSerializer(
                 my_review, context={'user': request.user})
             return Response(
@@ -322,7 +325,7 @@ class ReviewAPIView(APIView):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
 
         # 이미 리뷰를 작성한 사용자인 경우 등록 거부
-        if game.reviews.filter(author__pk=request.user.pk):
+        if game.reviews.filter(author__pk=request.user.pk, is_visible=True).exists():
             return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 별점 계산
@@ -349,12 +352,22 @@ class ReviewDetailAPIView(APIView):
         return permissions
 
     def get(self, request, review_id):
-        review = Review.objects.get(pk=review_id)
+        try:
+        # 리뷰가 존재하고, is_visible이 True인 경우만 가져옴
+            review = Review.objects.get(pk=review_id, is_visible=True)
+        except Review.DoesNotExist:
+            # 리뷰가 존재하지 않으면 404 응답과 함께 메시지 반환
+            return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
         serializer = ReviewSerializer(review, context={'user': request.user})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request, review_id):
-        review = get_object_or_404(Review, pk=review_id)
+        try:
+            # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+            review = get_object_or_404(Review, pk=review_id, is_visible=True)
+        except Http404:
+            # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
@@ -373,7 +386,12 @@ class ReviewDetailAPIView(APIView):
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, review_id):
-        review = get_object_or_404(Review, pk=review_id)
+        try:
+            # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+            review = get_object_or_404(Review, pk=review_id, is_visible=True)
+        except Http404:
+            # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
@@ -399,8 +417,12 @@ def toggle_review_like(request, review_id):
     리뷰에 좋아요/싫어요 동작
     """
     user = request.user
-    review = get_object_or_404(Review, id=review_id)
-
+    try:
+        # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+        review = get_object_or_404(Review, pk=review_id, is_visible=True)
+    except Http404:
+        # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+        return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
     # ReviewsLike 객체를 가져오거나 새로 생성
     # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
     review_like, _ = ReviewsLike.objects.get_or_create(
