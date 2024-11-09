@@ -49,13 +49,21 @@ class ReviewSerializer(serializers.ModelSerializer):
     def get_user_is_like(self, obj):
         # 현재 요청을 보낸 사용자 확인
         user = self.context.get('user', None)
-        # 사용자가 해당 리뷰에 남긴 상태를 조회
+        # 사용자가 인증되지 않은 경우 0 반환
+        if not user or not user.is_authenticated:
+            return 0
+
+        # 사용자가 인증된 경우, 해당 리뷰에 남긴 상태를 조회
+        review_like = ReviewsLike.objects.filter(review=obj, user=user).first()
+        # 리뷰 상태가 존재하면 그 값을 반환, 없으면 0을 반환
+        return review_like.is_like if review_like else 0
+        """ # 사용자가 해당 리뷰에 남긴 상태를 조회
         if user:
             review_like = ReviewsLike.objects.filter(review=obj, user=user).first()
             # 리뷰 상태가 존재하면 그 값을 반환, 없으면 0을 반환
             return review_like.is_like if review_like else 0
         else:
-            return 0
+            return 0 """
 
 
 class ScreenshotSerializer(serializers.ModelSerializer):
