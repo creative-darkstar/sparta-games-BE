@@ -24,6 +24,11 @@ class CustomUserManager(BaseUserManager):
     
 
 class User(AbstractUser):
+    # 비활성화 할 column
+    username = None
+    first_name = None
+    last_name = None
+    
     email = models.EmailField(unique=True)
     nickname = models.CharField(max_length=30, unique=True)
     LOGIN_TYPE_CHOICES = (
