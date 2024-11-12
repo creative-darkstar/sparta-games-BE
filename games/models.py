@@ -81,7 +81,7 @@ class Playtime(models.Model):
     )
     entered_at = models.DateTimeField()
     exited_at = models.DateTimeField()
-    playtime = models.IntegerField(null=True)    
+    total_playtime = models.IntegerField(null=True)    
 
 
 # 기존 Comment 테이블
