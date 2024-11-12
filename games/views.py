@@ -578,7 +578,8 @@ def game_register_deny(request, game_pk):
     row.save()
 
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
-    return redirect("games:admin_list")
+    # return redirect("games:admin_list")
+    return Response({"message": "게임 등록을 거부했습니다."}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
