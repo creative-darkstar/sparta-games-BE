@@ -79,8 +79,8 @@ class Playtime(models.Model):
     game = models.ForeignKey(
         Game, on_delete=models.CASCADE, related_name="playtime"
     )
-    created_at = models.DateTimeField()
-    created_at = models.DateTimeField()
+    entered_at = models.DateTimeField()
+    exited_at = models.DateTimeField()
     playtime = models.IntegerField(null=True)    
 
 
