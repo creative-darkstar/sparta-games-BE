@@ -562,7 +562,8 @@ def game_register(request, game_pk):
     # return Response({"message": f"등록을 성공했습니다. (게시물 id: {game_pk})"}, status=status.HTTP_200_OK)
 
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
-    return redirect("games:admin_list")
+    # return redirect("games:admin_list")
+    return Response({"message": "게임이 등록되었습니다."}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
