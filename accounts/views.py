@@ -1,25 +1,21 @@
-from django.shortcuts import redirect, render
-from django.urls import reverse
-from django.views.decorators.csrf import csrf_exempt
+import secrets
+from django.shortcuts import render
 
-import rest_framework
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
 
-from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
-from allauth.socialaccount.providers.oauth2.client import OAuth2Client
 
-from dj_rest_auth import views
-from dj_rest_auth.registration.views import SocialLoginView
 from dj_rest_auth.serializers import JWTSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib import messages
-from django.contrib.auth import get_user_model, login
+from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import PBKDF2PasswordHasher
 import re
 import requests
+import urllib.parse
 from rest_framework import status
 from spartagames import config
 
@@ -44,7 +40,8 @@ class SignUpAPIView(APIView):
         password = request.data.get("password")
         password_check = request.data.get("password_check")
         nickname = request.data.get("nickname")
-        game_category = request.data.getlist("game_category")
+        # game_category = request.data.getlist("game_category")
+        game_category = request.data.get("game_category",[])
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
@@ -66,7 +63,7 @@ class SignUpAPIView(APIView):
         elif len(nickname) == 0:
             return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(nickname=nickname).exists():
-            return Response({"error_message":"이미 존재하는 username입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # DB에 유저 등록
         user = get_user_model().objects.create_user(
@@ -99,10 +96,11 @@ def google_login_callback(request):
     # Authorization code를 token으로 전환
     try:
         authorization_code = request.META.get('HTTP_AUTHORIZATION')
+        decoded_code = urllib.parse.unquote(authorization_code)
         url = "https://oauth2.googleapis.com/token"
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         data = {
-            "code": authorization_code,
+            "code": decoded_code,
             "client_id": config.GOOGLE_AUTH["client_id"],
             "client_secret": config.GOOGLE_AUTH["client_secret"],
             "redirect_uri": config.GOOGLE_AUTH["redirect_uri"],
@@ -122,7 +120,6 @@ def google_login_callback(request):
         profile_request = requests.get(f'https://www.googleapis.com/oauth2/v3/tokeninfo?id_token={id_token}')
         profile_json = profile_request.json()
 
-        username = profile_json.get('name', None)
         email = profile_json.get('email', None)
 
         try:
@@ -139,7 +136,6 @@ def google_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="구글")
         
@@ -184,7 +180,6 @@ def naver_login_callback(request):
         profile_request = requests.get(url, headers=headers)
         profile_json = profile_request.json().get("response", None)
 
-        username = profile_json.get('name', None)
         email = profile_json.get('email', None)
 
         try:
@@ -196,12 +191,14 @@ def naver_login_callback(request):
                 'refresh': str(token),
             }
             serializer = JWTSerializer(data)
-            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({
+                'message': '소셜 로그인 성공, 기존 회원입니다.',
+                **serializer.data
+                }, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="네이버")
 
@@ -250,7 +247,7 @@ def kakao_login_callback(request):
         profile_json = profile_request.json()
         
         account = profile_json.get('kakao_account', None)
-        username = account["profile"]["nickname"]
+        nickname = account["profile"]["nickname"]
         email = account["email"]
         
         try:
@@ -267,7 +264,7 @@ def kakao_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
+                'nickname': nickname,
                 'account': account,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="카카오")
@@ -318,7 +315,7 @@ def discord_login_callback(request):
         profile_request = requests.get(url, headers=headers)
         profile_json = profile_request.json()
         
-        username = profile_json.get('username', None)
+        nickname = profile_json.get('username', None)
         email = profile_json.get('email', None)
         
         try:
@@ -335,7 +332,7 @@ def discord_login_callback(request):
             return Response({
                 'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
-                'username': username,
+                'nickname': nickname,
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="디스코드")
 
@@ -370,11 +367,11 @@ def social_signinup(email, username, provider=''):
 
 
 # ---------- Web---------- #
-def login_page(request):
-    return render(request, 'accounts/login.html')
+# def login_page(request):
+#     return render(request, 'accounts/login.html')
 
 
-def signup_page(request):
-    email = request.GET.get('email', '')
-    username = request.GET.get('username', '')
-    return render(request, 'accounts/signup.html', {'email': email, 'username': username})
+# def signup_page(request):
+#     email = request.GET.get('email', '')
+#     username = request.GET.get('username', '')
+#     return render(request, 'accounts/signup.html', {'email': email, 'username': username})

@@ -3,7 +3,7 @@ import os
 import zipfile
 
 from django.core.files.storage import FileSystemStorage
-from django.http import FileResponse
+from django.http import FileResponse, Http404
 from django.shortcuts import render, get_object_or_404, redirect
 from django.db.models import Avg, Q
 from django.db.models.functions import Round
@@ -23,6 +23,7 @@ from .models import (
     Review,
     Screenshot,
     GameCategory,
+    ReviewsLike,
 )
 from accounts.models import BotCnt
 from .serializers import (
@@ -83,7 +84,7 @@ class GameListAPIView(APIView):
         else:
             rows = Game.objects.filter(is_visible=True, register_state=1)
 
-        rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
+        # rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
 
         # 추가 옵션 정렬
         if order == 'new':
@@ -115,7 +116,7 @@ class GameListAPIView(APIView):
             title=request.data.get('title'),
             thumbnail=request.FILES.get('thumbnail'),
             youtube_url=request.data.get('youtube_url'),
-            maker=request.user, #FE 확인필요
+            maker=request.user,  # FE 확인필요
             content=request.data.get('content'),
             gamefile=request.FILES.get('gamefile'),
             base_control=request.data.get('base_control'),
@@ -139,7 +140,7 @@ class GameListAPIView(APIView):
             )
             screenshots.append(screenshot.src.url)
 
-        return Response({"message":"게임업로드 성공했습니다"},status=status.HTTP_200_OK)
+        return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
 class GameDetailAPIView(APIView):
@@ -187,22 +188,25 @@ class GameDetailAPIView(APIView):
 
     def put(self, request, game_pk):
         game = self.get_object(game_pk)
-        
+
         # 작성한 유저이거나 관리자일 경우 동작함
         if game.maker == request.user or request.user.is_staff == True:
-            if request.FILES.get("gamefile"): # 게임파일을 교체할 경우 검수페이지로 이동
+            if request.FILES.get("gamefile"):  # 게임파일을 교체할 경우 검수페이지로 이동
                 game.register_state = 0
                 game.gamefile = request.FILES.get("gamefile")
             game.title = request.data.get("title", game.title)
             game.thumbnail = request.FILES.get("thumbnail", '')
-            game.youtube_url = request.data.get("youtube_url", game.youtube_url)
+            game.youtube_url = request.data.get(
+                "youtube_url", game.youtube_url)
             game.content = request.data.get("content", game.content)
-            game.base_control=request.data.get('base_control', game.base_control),
-            game.release_note=request.data.get('release_note', game.release_note),
+            game.base_control = request.data.get(
+                'base_control', game.base_control),
+            game.release_note = request.data.get(
+                'release_note', game.release_note),
             game.save()
 
             category_data = request.data.get('category')
-            if category_data is not None: # 태그가 바뀔 경우 기존 태그를 초기화, 신규 태그로 교체
+            if category_data is not None:  # 태그가 바뀔 경우 기존 태그를 초기화, 신규 태그로 교체
                 game.category.clear()
                 categories = [GameCategory.objects.get_or_create(name=item.strip())[
                     0] for item in category_data.split(',') if item.strip()]
@@ -213,7 +217,7 @@ class GameDetailAPIView(APIView):
             pre_screenshots_data.delete()
 
             # 받아온 스크린샷으로 교체
-            if request.data.get('screenshots'): 
+            if request.data.get('screenshots'):
                 for item in request.FILES.getlist("screenshots"):
                     game.screenshots.create(src=item)
 
@@ -242,13 +246,14 @@ class GameLikeAPIView(APIView):
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)
-        if game.like.filter(pk=request.user.pk).exists(): 
+        like_instance = Like.objects.filter(user=request.user, game=game).first()
+        if like_instance:
             # 수정
-            game.like.remove(request.user)
+            like_instance.delete()
             return Response({'message': "즐겨찾기 취소"}, status=status.HTTP_200_OK)
         else:
             # 생성
-            game.like.add(request.user)
+            Like.objects.create(user=request.user, game=game)
             return Response({'message': "즐겨찾기"}, status=status.HTTP_200_OK)
 
 
@@ -287,18 +292,50 @@ class ReviewAPIView(APIView):
         return permissions
 
     def get(self, request, game_pk):
-        reviews = Review.objects.all().filter(game=game_pk)
-        serializer = ReviewSerializer(reviews, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        reviews = Review.objects.all().filter(game=game_pk, is_visible=True)
+
+        if not reviews.exists():
+            return Response({"message": "해당 게임에 리뷰가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 로그인한 경우
+        if request.user.is_authenticated:
+            reviews_serializer = ReviewSerializer(
+                reviews, many=True, context={'user': request.user})
+            my_review = reviews.filter(author__pk=request.user.pk).first()
+            my_review_serializer = ReviewSerializer(
+                my_review, context={'user': request.user})
+            return Response(
+                {
+                    "my_review": my_review_serializer.data,
+                    "all_reviews": reviews_serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
+        # 로그인하지 않은 경우
+        else:
+            reviews_serializer = ReviewSerializer(reviews, many=True)
+            return Response(
+                {
+                    "all_reviews": reviews_serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-        #별점 계산
-        game.star=game.star+((request.data.get('star')-game.star)/(game.review_cnt+1))
-        game.review_cnt=game.review_cnt+1
+
+        # 이미 리뷰를 작성한 사용자인 경우 등록 거부
+        if game.reviews.filter(author__pk=request.user.pk, is_visible=True).exists():
+            return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 별점 계산
+        game.star = game.star + \
+            ((request.data.get('star')-game.star)/(game.review_cnt+1))
+        game.review_cnt = game.review_cnt+1
         game.save()
 
-        serializer = ReviewSerializer(data=request.data)
+        serializer = ReviewSerializer(
+            data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
             return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -306,25 +343,41 @@ class ReviewAPIView(APIView):
 
 
 class ReviewDetailAPIView(APIView):
-    permission_classes = [IsAuthenticated]
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
 
     def get(self, request, review_id):
-        game_pk=request.data.get('game_pk')
-        review = Review.objects.all().filter(game=game_pk, pk=review_id)
-        serializer = ReviewSerializer(review)
+        try:
+        # 리뷰가 존재하고, is_visible이 True인 경우만 가져옴
+            review = Review.objects.get(pk=review_id, is_visible=True)
+        except Review.DoesNotExist:
+            # 리뷰가 존재하지 않으면 404 응답과 함께 메시지 반환
+            return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = ReviewSerializer(review, context={'user': request.user})
         return Response(serializer.data, status=status.HTTP_200_OK)
 
     def put(self, request, review_id):
-        review = get_object_or_404(Review, pk=review_id)
+        try:
+            # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+            review = get_object_or_404(Review, pk=review_id, is_visible=True)
+        except Http404:
+            # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
-            game_pk=request.data.get('game_pk')
+            game_pk = request.data.get('game_pk')
             game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-            game.star=game.star+((request.data.get('star')-request.data.get('pre_star'))/(game.review_cnt))
+            game.star = game.star + \
+                ((request.data.get('star')-request.data.get('pre_star'))/(game.review_cnt))
             game.save()
             serializer = ReviewSerializer(
-                review, data=request.data, partial=True)
+                review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -333,20 +386,65 @@ class ReviewDetailAPIView(APIView):
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, review_id):
-        review = get_object_or_404(Review, pk=review_id)
+        try:
+            # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+            review = get_object_or_404(Review, pk=review_id, is_visible=True)
+        except Http404:
+            # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
-            game_pk=request.data.get('game_pk')
+            game_pk = request.data.get('game_pk')
             game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-            game.star=game.star+((game.star-review.star)/(game.review_cnt-1))
-            game.review_cnt=game.review_cnt-1
+            if game.review_cnt > 1:
+                game.star = game.star + \
+                    ((game.star-review.star)/(game.review_cnt-1))
+            else:
+                game.star = 0
+            game.review_cnt = game.review_cnt-1
             game.save()
             review.is_visible = False
             review.save()
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(['POST'])
+def toggle_review_like(request, review_id):
+    """
+    리뷰에 좋아요/싫어요 동작
+    """
+    user = request.user
+    try:
+        # 리뷰가 존재하고, is_visible이 True인 경우에만 가져옴
+        review = get_object_or_404(Review, pk=review_id, is_visible=True)
+    except Http404:
+        # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+        return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+    # ReviewsLike 객체를 가져오거나 새로 생성
+    # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
+    review_like, _ = ReviewsLike.objects.get_or_create(
+        user=user, review=review)
+
+    # 요청에서 받은 'action'에 따라 상태 변경
+    action = request.data.get('action', None)
+    if action == 'like':
+        if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
+            review_like.is_like = 1
+        else:
+            # 이미 'like' 상태일 경우 'no state'로 전환
+            review_like.is_like = 0
+    elif action == 'dislike':
+        if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
+            review_like.is_like = 2
+        else:
+            # 이미 'dislike' 상태일 경우 'no state'로 전환
+            review_like.is_like = 0
+
+    review_like.save()  # 변경 사항 저장
+    return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
 
 
 class CategoryAPIView(APIView):
@@ -381,6 +479,10 @@ class CategoryAPIView(APIView):
 
 @api_view(['POST'])
 def game_register(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
     # game_pk에 해당하는 row 가져오기 (게시 중인 상태이면서 '등록 중' 상태)
     row = get_object_or_404(
         Game, pk=game_pk, is_visible=True, register_state=0)
@@ -466,20 +568,34 @@ def game_register(request, game_pk):
 
     # 알맞은 HTTP Response 리턴
     # return Response({"message": f"등록을 성공했습니다. (게시물 id: {game_pk})"}, status=status.HTTP_200_OK)
-    return redirect("games:admin_list")
+
+    # 2024-10-31 추가. return 수정 필요 (redirect -> response)
+    # return redirect("games:admin_list")
+    return Response({"message": "게임이 등록되었습니다."}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
 def game_register_deny(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
     row = get_object_or_404(
         Game, pk=game_pk, is_visible=True, register_state=0)
     row.register_state = 2
     row.save()
-    return redirect("games:admin_list")
+
+    # 2024-10-31 추가. return 수정 필요 (redirect -> response)
+    # return redirect("games:admin_list")
+    return Response({"message": "게임 등록을 거부했습니다."}, status=status.HTTP_200_OK)
 
 
 @api_view(['POST'])
 def game_dzip(request, game_pk):
+    # 관리자 여부 확인
+    if request.user.is_staff is False:
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
     row = get_object_or_404(
         Game, pk=game_pk, register_state=0, is_visible=True)
     zip_path = row.gamefile.url
@@ -507,7 +623,7 @@ def game_dzip(request, game_pk):
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)
-MAX_USES_PER_DAY = 10 # 하루 당 질문 10개로 제한기준
+MAX_USES_PER_DAY = 10  # 하루 당 질문 10개로 제한기준
 
 # chatbot API
 
@@ -528,7 +644,7 @@ def ChatbotAPIView(request):
 
     input_data = request.data.get('input_data')
     categorylist = list(GameCategory.objects.values_list('name', flat=True))
-    
+
     # GPT API와 통신을 통해 답장을 받아온다.(아래 형식을 따라야함)(추가 옵션은 문서를 참고)
     instructions = f"""
     내가 제한한 카테고리 목록 : {categorylist} 여기서만 이야기를 해줘, 이외에는 말하지마
