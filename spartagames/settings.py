@@ -117,7 +117,7 @@ DATABASES = {
 }
 
 # Celery 브로커로 Django 데이터베이스 사용
-CELERY_BROKER_URL = 'django-db'
+CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
 CELERY_RESULT_BACKEND = 'django-db'
 
 CELERY_ACCEPT_CONTENT = ['json']
