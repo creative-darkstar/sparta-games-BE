@@ -143,22 +143,31 @@ def game_list_search(request):
     gm_q = request.query_params.get('gm-q')
     order = request.query_params.get('order')
 
-    # 검색 옵션 필터링
+    # 누적 조건 필터링을 위한 Q 객체 초기화
+    query = Q(is_visible=True, register_state=1)
+
+    # 검색 옵션에 따라 Q 객체에 조건 추가
+    search_tags = []
     if category_q:
-        rows = Game.objects.filter(category__name__icontains=category_q, is_visible=True, register_state=1)
-    elif game_q:
-        rows = Game.objects.filter(title__icontains=game_q, is_visible=True, register_state=1)
-    elif maker_q:
-        rows = Game.objects.filter(maker__nickname__icontains=maker_q, is_visible=True, register_state=1)
-    elif gm_q:
-        rows = Game.objects.filter(
-            Q(title__icontains=gm_q) | Q(maker__nickname__icontains=gm_q),
-            is_visible=True, register_state=1
-        )
-    else:
-        rows = Game.objects.filter(is_visible=True, register_state=1)
+        query &= Q(category__name__icontains=category_q)
+        search_tags.append(f"카테고리: {category_q}")
+    if game_q:
+        query &= Q(title__icontains=game_q)
+        search_tags.append(f"게임 이름: {game_q}")
+    if maker_q:
+        query &= Q(maker__nickname__icontains=maker_q)
+        search_tags.append(f"제작자: {maker_q}")
+    if gm_q:
+        query &= Q(title__icontains=gm_q) | Q(maker__nickname__icontains=gm_q)
+        search_tags.append(f"일반 검색: {gm_q}")
+
+    # 누적된 조건으로 게임 필터링
+    rows = Game.objects.filter(query)
+
+    # 결과가 없는 경우 메시지 반환
     if not rows.exists():
-        return Response({"message": "현재 표시 가능한 게임이 없습니다."}, status=404)
+        search_summary = ", ".join(search_tags) if search_tags else "모든 게임"
+        return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
 
     # 정렬 옵션
     if order == 'new':
@@ -170,12 +179,26 @@ def game_list_search(request):
     else:
         rows = rows.order_by('-created_at')
 
+    # 좋아요 게임 목록 가져오기
+    favorite_games = []
+    if request.user.is_authenticated:
+        favorite_games = rows.filter(likes__user=request.user)
     
     # 페이지네이션
     paginator = PageNumberPagination()
     result = paginator.paginate_queryset(rows, request)
     serializer = GameListSerializer(result, many=True)
-    return paginator.get_paginated_response(serializer.data)
+    
+    # 좋아요한 게임 직렬화
+    favorite_serializer = GameListSerializer(favorite_games, many=True)
+
+    # 응답 데이터에 좋아요 게임 포함
+    response_data = {
+        "results": serializer.data,
+        "favorite_games": favorite_serializer.data if request.user.is_authenticated else []
+    }
+
+    return paginator.get_paginated_response(response_data)
 
 class GameDetailAPIView(APIView):
     """
