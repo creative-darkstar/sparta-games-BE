@@ -74,14 +74,14 @@ class GameListAPIView(APIView):
         recent_games = Game.objects.filter(created_at__gte=diff_time, is_visible=True, register_state=1)
 
         # 추가 옵션 정렬
-        if order == 'new':
+        """ if order == 'new':
             rows = rows.order_by('-created_at')
         elif order == 'view':
             rows = rows.order_by('-view_cnt')
         elif order == 'star':
             rows = rows.order_by('-star')
         else:
-            rows = rows.order_by('-created_at')
+            rows = rows.order_by('-created_at') """
 
         serializer = GameListSerializer(rand1, many=True)
         serializer2 = GameListSerializer(rand2, many=True)
@@ -149,7 +149,7 @@ def game_list_search(request):
     # 검색 옵션에 따라 Q 객체에 조건 추가
     search_tags = []
     if category_q:
-        query &= Q(category__name__icontains=category_q)
+        query &= Q(category__name=category_q)
         search_tags.append(f"카테고리: {category_q}")
     if game_q:
         query &= Q(title__icontains=game_q)
