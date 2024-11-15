@@ -89,9 +89,9 @@ class GameListAPIView(APIView):
         favorite_serializer=GameListSerializer(favorites,many=True)
         recent_serializer=GameListSerializer(recent_games,many=True)
         data={
-            "rand1":serializer.data,
-            "rand2": serializer2.data,
-            "rand3": serializer3.data,
+            "rand1":[selected_categories[0],serializer.data],
+            "rand2": [selected_categories[1],serializer2.data],
+            "rand3": [selected_categories[2],serializer3.data],
             "favorite":favorite_serializer.data,
             "recent":recent_serializer.data,
         }
