@@ -14,6 +14,7 @@ urlpatterns = [
     path('api/review/<int:review_id>/', views.ReviewDetailAPIView.as_view(), name='review_detail'),
     path('api/review/<int:review_id>/like/', views.toggle_review_like, name='toggle_review_like'),
     path("api/categories/", views.CategoryAPIView.as_view(), name="categories"),
+    path("api/list/<int:game_pk>/playtime/", views.GamePlaytimeAPIView.as_view(), name="playtime"),
     path("api/list/<int:game_pk>/register/", views.game_register, name="game_register"),
     path("api/list/<int:game_pk>/deny/", views.game_register_deny, name="game_register_deny"),
     path('api/list/<int:game_pk>/dzip/', views.game_dzip, name='game_dzip'),
