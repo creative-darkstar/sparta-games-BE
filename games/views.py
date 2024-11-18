@@ -11,7 +11,7 @@ from django.db.models.functions import Round
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated  # 로그인 인증토큰
+from rest_framework.permissions import IsAuthenticated, AllowAny  # 로그인 인증토큰
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import permission_classes
@@ -38,7 +38,8 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
-
+from datetime import timedelta
+import random
 
 class GameListAPIView(APIView):
     """
@@ -58,54 +59,44 @@ class GameListAPIView(APIView):
     """
 
     def get(self, request):
-        category_q = request.query_params.get('category-q')
-        game_q = request.query_params.get('game-q')
-        maker_q = request.query_params.get('maker-q')
-        gm_q = request.query_params.get('gm-q')
         order = request.query_params.get('order')
-        search = request.query_params.get('search')
-
-        # 검색옵션 별 목록화
-        if category_q:
-            rows = Game.objects.filter(category__name__icontains=category_q).filter(
-                is_visible=True, register_state=1)
-        elif game_q:
-            rows = Game.objects.filter(
-                is_visible=True,
-                register_state=1,
-                title__icontains=game_q
-            )
-        elif maker_q:
-            rows = Game.objects.filter(maker__username__icontains=maker_q).filter(
-                is_visible=True, register_state=1)
-        elif gm_q:
-            rows = Game.objects.filter(
-                Q(title__contains=gm_q) | Q(maker__username__icontains=gm_q)
-            ).filter(is_visible=True, register_state=1)
-        else:
-            rows = Game.objects.filter(is_visible=True, register_state=1)
-
-        # rows = rows.annotate(star=Round(Avg('reviews__star'), 1))
+        diff_time = timezone.now() - timedelta(hours=3)
+        categories = list(GameCategory.objects.all().values_list('name',flat=True))
+        if not categories:
+            return Response({"message": "카테고리가 존재하지 않는다. 카테고리 생성이 필요하다"}, status=status.HTTP_404_NOT_FOUND)
+        if len(categories) < 3:
+            return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
+        selected_categories = random.sample(categories, 3)
+        
+        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])
+        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])
+        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])
+        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)
+        recent_games = Game.objects.filter(created_at__gte=diff_time, is_visible=True, register_state=1)
 
         # 추가 옵션 정렬
-        if order == 'new':
+        """ if order == 'new':
             rows = rows.order_by('-created_at')
         elif order == 'view':
             rows = rows.order_by('-view_cnt')
         elif order == 'star':
             rows = rows.order_by('-star')
         else:
-            rows = rows.order_by('-created_at')
+            rows = rows.order_by('-created_at') """
 
-        # search_pagination
-        if search:
-            paginator = PageNumberPagination()
-            result = paginator.paginate_queryset(rows, request)
-            serializer = GameListSerializer(result, many=True)
-            return paginator.get_paginated_response(serializer.data)
-
-        serializer = GameListSerializer(rows, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        serializer = GameListSerializer(rand1, many=True)
+        serializer2 = GameListSerializer(rand2, many=True)
+        serializer3 = GameListSerializer(rand3, many=True)
+        favorite_serializer=GameListSerializer(favorites,many=True)
+        recent_serializer=GameListSerializer(recent_games,many=True)
+        data={
+            "rand1":[selected_categories[0],serializer.data],
+            "rand2": [selected_categories[1],serializer2.data],
+            "rand3": [selected_categories[2],serializer3.data],
+            "favorite":favorite_serializer.data,
+            "recent":recent_serializer.data,
+        }
+        return Response(data, status=status.HTTP_200_OK)
 
     """
     게임 등록
@@ -143,6 +134,72 @@ class GameListAPIView(APIView):
 
         return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
+
+@api_view(['GET'])
+@permission_classes([AllowAny])  # 인증이 필요할 경우 IsAuthenticated로 변경 가능
+def game_list_search(request):
+    category_q = request.query_params.get('category-q')
+    game_q = request.query_params.get('game-q')
+    maker_q = request.query_params.get('maker-q')
+    gm_q = request.query_params.get('gm-q')
+    order = request.query_params.get('order')
+
+    # 누적 조건 필터링을 위한 Q 객체 초기화
+    query = Q(is_visible=True, register_state=1)
+
+    # 검색 옵션에 따라 Q 객체에 조건 추가
+    search_tags = []
+    if category_q:
+        query &= Q(category__name=category_q)
+        search_tags.append(f"카테고리: {category_q}")
+    if game_q:
+        query &= Q(title__icontains=game_q)
+        search_tags.append(f"게임 이름: {game_q}")
+    if maker_q:
+        query &= Q(maker__nickname__icontains=maker_q)
+        search_tags.append(f"제작자: {maker_q}")
+    if gm_q:
+        query &= Q(title__icontains=gm_q) | Q(maker__nickname__icontains=gm_q)
+        search_tags.append(f"일반 검색: {gm_q}")
+
+    # 누적된 조건으로 게임 필터링
+    rows = Game.objects.filter(query)
+
+    # 결과가 없는 경우 메시지 반환
+    if not rows.exists():
+        search_summary = ", ".join(search_tags) if search_tags else "모든 게임"
+        return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
+
+    # 정렬 옵션
+    if order == 'new':
+        rows = rows.order_by('-created_at')
+    elif order == 'view':
+        rows = rows.order_by('-view_cnt')
+    elif order == 'star':
+        rows = rows.order_by('-star')
+    else:
+        rows = rows.order_by('-created_at')
+
+    # 좋아요 게임 목록 가져오기
+    favorite_games = []
+    if request.user.is_authenticated:
+        favorite_games = rows.filter(likes__user=request.user)
+    
+    # 페이지네이션
+    paginator = PageNumberPagination()
+    result = paginator.paginate_queryset(rows, request)
+    serializer = GameListSerializer(result, many=True)
+    
+    # 좋아요한 게임 직렬화
+    favorite_serializer = GameListSerializer(favorite_games, many=True)
+
+    # 응답 데이터에 좋아요 게임 포함
+    response_data = {
+        "results": serializer.data,
+        "favorite_games": favorite_serializer.data if request.user.is_authenticated else []
+    }
+
+    return paginator.get_paginated_response(response_data)
 
 class GameDetailAPIView(APIView):
     """
@@ -449,6 +506,14 @@ def toggle_review_like(request, review_id):
 
 
 class CategoryAPIView(APIView):
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('post' or 'delete'):  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
+    
     def get(self, request):
         categories = GameCategory.objects.all()
         serializer = CategorySerailizer(categories, many=True)
@@ -460,7 +525,8 @@ class CategoryAPIView(APIView):
         serializer = CategorySerailizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
-            return Response({"message": "태그를 추가했습니다"}, status=status.HTTP_200_OK)
+            category=request.data.get("name")
+            return Response({"message": f"태그({category})를 추가했습니다"}, status=status.HTTP_200_OK)
 
     def delete(self, request):
         if request.user.is_staff is False:
