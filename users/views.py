@@ -72,6 +72,11 @@ class ProfileAPIView(APIView):
         categories = request.data.get("game_category", [])
         if categories:
             game_categories = GameCategory.objects.filter(name__in=categories)
+            if not game_categories:
+                return Response(
+                    {"error_message": "올바른 game category를 입력해주세요."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             user.game_category.set(game_categories)
         else:
             categories = list(user.game_category.values_list('pk', flat=True))
