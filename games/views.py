@@ -103,6 +103,17 @@ class GameListAPIView(APIView):
     """
 
     def post(self, request):
+        # 필수 항목 확인
+        required_fields = ["title", "category", "content", "gamefile"]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+
+        # 누락된 필수 항목이 있을 경우 에러 메시지 반환
+        if missing_fields:
+            return Response(
+                {"error": f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Game model에 우선 저장
         game = Game.objects.create(
             title=request.data.get('title'),
