@@ -78,15 +78,21 @@ class GameListAPIView(APIView):
         my_game_pack = None
         if request.user.is_authenticated:
             # 1. 즐겨찾기한 게임
-            liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')
+            liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
             # 2. 최근 플레이한 게임
             recently_played_games = Game.objects.filter(is_visible=True, register_state=1,playtime__user=request.user).order_by('-playtime__exited_at').distinct()
             
+            # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
+            liked_games_count = liked_games.count()
+            if liked_games_count < 4:
+                additional_recent_games = recently_played_games[:4 - liked_games_count]
+                combined_games = list(liked_games) + list(additional_recent_games)
+            else:
+                combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
+
             # my_game_pack 설정
-            if liked_games.exists():
-                my_game_pack = GameListSerializer(liked_games, many=True, context={'user': request.user}).data
-            elif recently_played_games.exists():
-                my_game_pack = GameListSerializer(recently_played_games, many=True, context={'user': request.user}).data
+            if combined_games:
+                my_game_pack = GameListSerializer(combined_games, many=True, context={'user': request.user}).data
             else:
                 my_game_pack = [{"message": "게임이 없습니다."}]
         else:
@@ -106,8 +112,8 @@ class GameListAPIView(APIView):
         serializer = GameListSerializer(rand1, many=True, context={'user': request.user})
         serializer2 = GameListSerializer(rand2, many=True, context={'user': request.user})
         serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
-        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}) if favorites.exists() else [{"message": "즐겨찾기한 게임이 없습니다."}]
-        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}) if recent_games.exists() else [{"message": "최근 등록된 게임이 없습니다."}]
+        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else [{"message": "즐겨찾기한 게임이 없습니다."}]
+        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else [{"message": "최근 등록된 게임이 없습니다."}]
 
         # 응답 데이터 구성
         data = {
