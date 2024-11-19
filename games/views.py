@@ -84,11 +84,11 @@ class GameListAPIView(APIView):
         else:
             rows = rows.order_by('-created_at') """
 
-        serializer = GameListSerializer(rand1, many=True)
-        serializer2 = GameListSerializer(rand2, many=True)
-        serializer3 = GameListSerializer(rand3, many=True)
-        favorite_serializer=GameListSerializer(favorites,many=True)
-        recent_serializer=GameListSerializer(recent_games,many=True)
+        serializer = GameListSerializer(rand1, many=True, context={'user': request.user})
+        serializer2 = GameListSerializer(rand2, many=True, context={'user': request.user})
+        serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
+        favorite_serializer=GameListSerializer(favorites,many=True, context={'user': request.user})
+        recent_serializer=GameListSerializer(recent_games,many=True, context={'user': request.user})
         data={
             "rand1":[selected_categories[0],serializer.data],
             "rand2": [selected_categories[1],serializer2.data],
@@ -199,10 +199,10 @@ def game_list_search(request):
     # 페이지네이션
     paginator = PageNumberPagination()
     result = paginator.paginate_queryset(rows, request)
-    serializer = GameListSerializer(result, many=True)
+    serializer = GameListSerializer(result, many=True,context={'user': request.user})
     
     # 좋아요한 게임 직렬화
-    favorite_serializer = GameListSerializer(favorite_games, many=True)
+    favorite_serializer = GameListSerializer(favorite_games, many=True,context={'user': request.user})
 
     # 응답 데이터에 좋아요 게임 포함
     response_data = {
