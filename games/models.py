@@ -72,16 +72,27 @@ class View(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
-class Playtime(models.Model):
+class PlayLog(models.Model):
     user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="playtime_of_games"
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="playlog_of_games"
     )
     game = models.ForeignKey(
-        Game, on_delete=models.CASCADE, related_name="playtime"
+        Game, on_delete=models.CASCADE, related_name="playlog"
     )
-    entered_at = models.DateTimeField()
-    exited_at = models.DateTimeField()
-    total_playtime = models.IntegerField(null=True)    
+    start_at = models.DateTimeField(null=True)
+    end_at = models.DateTimeField(null=True)
+    playtime = models.IntegerField(null=True)
+
+
+class TotalPlayTime(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="totalplaytime_of_games"
+    )
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="totalplaytime"
+    )
+    latest_at = models.DateTimeField(null=True)
+    totaltime = models.IntegerField(null=True)
 
 
 # 기존 Comment 테이블

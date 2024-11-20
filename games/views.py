@@ -24,7 +24,8 @@ from .models import (
     Screenshot,
     GameCategory,
     ReviewsLike,
-    Playtime,
+    PlayLog,
+    TotalPlayTime,
 )
 from accounts.models import BotCnt
 from .serializers import (
@@ -586,12 +587,13 @@ class GamePlaytimeAPIView(APIView):
         if request.user.is_authenticated is False:
             return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
         if Game.objects.filter(pk=game_pk, is_visible=True).exists():
-            playtimestart = Playtime.objects.create(
+            playtime = PlayLog.objects.create(
                 user=request.user,
                 game=get_object_or_404(Game, pk=game_pk, is_visible=True),
-                entered_at=timezone.now()  # 현재 시간으로 start_time
+                start_at=timezone.now()  # 현재 시간으로 start_time
             )
-            return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다."}, playtimestart.pk, status=status.HTTP_200_OK)
+            playtime_pk = playtime.pk
+            return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_pk":playtime_pk}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -600,14 +602,24 @@ class GamePlaytimeAPIView(APIView):
         if request.user.is_authenticated is False:
             return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
         if Game.objects.filter(pk=game_pk, is_visible=True).exists():
-            playtimeend = get_object_or_404(Playtime, pk=request.playtime_pk, is_visible=True)
-            playtimeend.exited_at = timezone.now()  # 현재 시간으로 end_time
-            playtimeend.total_playtime = (playtimeend.exited_at - playtimeend.entered_at).total_seconds()  # playtime_seconds로 playtime_seconds 계산
-            playtimeend.save()
+            game=get_object_or_404(Game, pk=game_pk, is_visible=True)
+            playlog = get_object_or_404(PlayLog, pk=request.data.get("playtime_pk"))
+            totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
+
+            playlog.end_at = timezone.now()  # 현재 시간으로 end_time
+            totalplaytime.latest_at = timezone.now()
+
+            totaltime = (playlog.end_at - playlog.start_at).total_seconds()
+            playlog.playtime = totaltime  # playtime_seconds로 playtime_seconds 계산
+            totalplaytime.totaltime = totalplaytime.totaltime + totaltime
+
+            playlog.save()
+            totalplaytime.save()
             return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
-                            "start_time":playtimeend.entered_at,
-                            "end_time":playtimeend.exited_at,
-                            "total_playtime": playtimeend.total_playtime}
+                            "start_time":playlog.start_at,
+                            "end_time":playlog.end_at,
+                            "playtime": playlog.playtime,
+                            "totalplaytime":totalplaytime.totaltime}
                             , status=status.HTTP_200_OK)
         else:
             return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
