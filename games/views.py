@@ -74,6 +74,30 @@ class GameListAPIView(APIView):
         favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)
         recent_games = Game.objects.filter(created_at__gte=diff_time, is_visible=True, register_state=1)
 
+        # 유저 존재 시 my_game_pack 추가
+        my_game_pack = None
+        if request.user.is_authenticated:
+            # 1. 즐겨찾기한 게임
+            liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+            # 2. 최근 플레이한 게임
+            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,playtime__user=request.user).order_by('-playtime__exited_at').distinct()
+            
+            # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
+            liked_games_count = liked_games.count()
+            if liked_games_count < 4:
+                additional_recent_games = recently_played_games[:4 - liked_games_count]
+                combined_games = list(liked_games) + list(additional_recent_games)
+            else:
+                combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
+
+            # my_game_pack 설정
+            if combined_games:
+                my_game_pack = GameListSerializer(combined_games, many=True, context={'user': request.user}).data
+            else:
+                my_game_pack = [{"message": "게임이 없습니다."}]
+        else:
+            my_game_pack = [{"message": "사용자가 인증되지 않았습니다."}]
+
         # 추가 옵션 정렬
         """ if order == 'new':
             rows = rows.order_by('-created_at')
@@ -84,17 +108,21 @@ class GameListAPIView(APIView):
         else:
             rows = rows.order_by('-created_at') """
 
-        serializer = GameListSerializer(rand1, many=True)
-        serializer2 = GameListSerializer(rand2, many=True)
-        serializer3 = GameListSerializer(rand3, many=True)
-        favorite_serializer=GameListSerializer(favorites,many=True)
-        recent_serializer=GameListSerializer(recent_games,many=True)
-        data={
-            "rand1":[selected_categories[0],serializer.data],
-            "rand2": [selected_categories[1],serializer2.data],
-            "rand3": [selected_categories[2],serializer3.data],
-            "favorite":favorite_serializer.data,
-            "recent":recent_serializer.data,
+        # 시리얼라이저 및 데이터 확인
+        serializer = GameListSerializer(rand1, many=True, context={'user': request.user})
+        serializer2 = GameListSerializer(rand2, many=True, context={'user': request.user})
+        serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
+        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else [{"message": "즐겨찾기한 게임이 없습니다."}]
+        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else [{"message": "최근 등록된 게임이 없습니다."}]
+
+        # 응답 데이터 구성
+        data = {
+            "rand1": [selected_categories[0], serializer.data] if rand1.exists() else [{"message": "게임이 없습니다."}],
+            "rand2": [selected_categories[1], serializer2.data] if rand2.exists() else [{"message": "게임이 없습니다."}],
+            "rand3": [selected_categories[2], serializer3.data] if rand3.exists() else [{"message": "게임이 없습니다."}],
+            "favorite": favorite_serializer,
+            "recent": recent_serializer,
+            "my_game_pack": my_game_pack,
         }
         return Response(data, status=status.HTTP_200_OK)
 
@@ -103,6 +131,17 @@ class GameListAPIView(APIView):
     """
 
     def post(self, request):
+        # 필수 항목 확인
+        required_fields = ["title", "category", "content", "gamefile"]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+
+        # 누락된 필수 항목이 있을 경우 에러 메시지 반환
+        if missing_fields:
+            return Response(
+                {"error": f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Game model에 우선 저장
         game = Game.objects.create(
             title=request.data.get('title'),
@@ -184,14 +223,19 @@ def game_list_search(request):
     favorite_games = []
     if request.user.is_authenticated:
         favorite_games = rows.filter(likes__user=request.user)
+
+    # 결과가 없는 경우 메시지 반환
+    if not rows.exists() and not favorite_games:
+        search_summary = ", ".join(search_tags) if search_tags else "모든 게임"
+        return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
     
     # 페이지네이션
     paginator = PageNumberPagination()
     result = paginator.paginate_queryset(rows, request)
-    serializer = GameListSerializer(result, many=True)
+    serializer = GameListSerializer(result, many=True,context={'user': request.user})
     
     # 좋아요한 게임 직렬화
-    favorite_serializer = GameListSerializer(favorite_games, many=True)
+    favorite_serializer = GameListSerializer(favorite_games, many=True,context={'user': request.user})
 
     # 응답 데이터에 좋아요 게임 포함
     response_data = {

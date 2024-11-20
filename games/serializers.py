@@ -1,14 +1,26 @@
 from rest_framework import serializers
-from .models import Game, Review, GameCategory, Screenshot, ReviewsLike
+from .models import Game, Review, GameCategory, Screenshot, ReviewsLike, Like
 
 
 class GameListSerializer(serializers.ModelSerializer):
     maker_name = serializers.CharField(source='maker.nickname')
-
+    chip_names= serializers.SerializerMethodField()
+    is_liked = serializers.SerializerMethodField()
     class Meta:
         model = Game
-        fields = ("pk", "title", "maker", "thumbnail",
-                  "star", "maker_name","content","chip")
+        fields = ("pk", "title", "thumbnail",
+                  "star", "maker_name","content","chip_names","is_liked")
+    
+    def get_chip_names(self, obj):
+        # Chip 객체의 name 필드를 리스트로 반환
+        return [chip.name for chip in obj.chip.all()]
+    
+    def get_is_liked(self, obj):
+        user = self.context.get('user')
+        # 사용자가 인증된 경우 해당 게임에 대한 좋아요 상태를 확인
+        if user and user.is_authenticated:
+            return Like.objects.filter(user=user, game=obj).exists()
+        return False
 
 
 class GameCreateSerializer(serializers.ModelSerializer):
