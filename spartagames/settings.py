@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     'django.contrib.sites',
 
     # Third Party
+    "corsheaders",
     "django_extensions",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
@@ -71,6 +72,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware'
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -78,6 +80,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'spartagames.custom_middleware.CustomXFrameOptionsMiddleware',  # Custom 설정 추가
     
     # Add the account middleware:
     "allauth.account.middleware.AccountMiddleware",
@@ -105,6 +108,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'spartagames.wsgi.application'
 
+#CORS settings
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5713",  # React 앱 주소
+]
+CORS_ALLOW_CREDENTIALS = True #인증 정보 포함 설정
+
+#CSRF 오류 발생시 활성화
+# CSRF_TRUSTED_ORIGINS = [
+#     "http://localhost:5713",
+# ]
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
