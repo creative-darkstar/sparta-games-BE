@@ -160,8 +160,20 @@ class GameListAPIView(APIView):
         # 카테고리 저장
         category_data = request.data.get('category')
         if category_data:
+            invalid_categories = []
             for item in category_data.split(','):
-                game.category.add(GameCategory.objects.get(name=item))
+                try:
+                    category = GameCategory.objects.get(name=item)
+                    game.category.add(category)
+                except GameCategory.DoesNotExist:
+                    invalid_categories.append(item)
+            
+            # 존재하지 않는 카테고리가 있는 경우 오류 메시지 반환
+            if invalid_categories:
+                return Response(
+                    {"message": f"다음 카테고리는 존재하지 않습니다: {', '.join(invalid_categories)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         # 이후 Screenshot model에 저장
         screenshots = list()
