@@ -40,6 +40,7 @@ from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
 from datetime import timedelta
+from spartagames.pagination import CustomPagination
 import random
 
 class GameListAPIView(APIView):
@@ -243,7 +244,7 @@ def game_list_search(request):
         return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
     
     # 페이지네이션
-    paginator = PageNumberPagination()
+    paginator = CustomPagination()
     result = paginator.paginate_queryset(rows, request)
     serializer = GameListSerializer(result, many=True,context={'user': request.user})
     
