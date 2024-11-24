@@ -81,7 +81,7 @@ class GameListAPIView(APIView):
             # 1. 즐겨찾기한 게임
             liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
             # 2. 최근 플레이한 게임
-            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,playtime__user=request.user).order_by('-playtime__exited_at').distinct()
+            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,totalplaytime__user=request.user).order_by('-totalplaytime__latest_at').distinct()
             
             # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
             liked_games_count = liked_games.count()
