@@ -40,6 +40,7 @@ from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
 from datetime import timedelta
+from spartagames.pagination import CustomPagination
 import random
 
 class GameListAPIView(APIView):
@@ -81,7 +82,7 @@ class GameListAPIView(APIView):
             # 1. 즐겨찾기한 게임
             liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
             # 2. 최근 플레이한 게임
-            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,playtime__user=request.user).order_by('-playtime__exited_at').distinct()
+            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,totalplaytime__user=request.user).order_by('-totalplaytime__latest_at').distinct()
             
             # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
             liked_games_count = liked_games.count()
@@ -160,8 +161,20 @@ class GameListAPIView(APIView):
         # 카테고리 저장
         category_data = request.data.get('category')
         if category_data:
+            invalid_categories = []
             for item in category_data.split(','):
-                game.category.add(GameCategory.objects.get(name=item))
+                try:
+                    category = GameCategory.objects.get(name=item)
+                    game.category.add(category)
+                except GameCategory.DoesNotExist:
+                    invalid_categories.append(item)
+            
+            # 존재하지 않는 카테고리가 있는 경우 오류 메시지 반환
+            if invalid_categories:
+                return Response(
+                    {"message": f"다음 카테고리는 존재하지 않습니다: {', '.join(invalid_categories)}"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
         # 이후 Screenshot model에 저장
         screenshots = list()
@@ -231,7 +244,7 @@ def game_list_search(request):
         return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
     
     # 페이지네이션
-    paginator = PageNumberPagination()
+    paginator = CustomPagination()
     result = paginator.paginate_queryset(rows, request)
     serializer = GameListSerializer(result, many=True,context={'user': request.user})
     
