@@ -22,7 +22,7 @@ class ProfileAPIView(APIView):
     def get(self, request, user_pk):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
         profile_image = user.image.url if user.image else ''
-        categories = list(user.game_category.values_list('pk', flat=True))
+        categories = list(user.game_category.values_list('name', flat=True))
         return Response({
             "user_pk": user_pk,
             "email": user.email,
