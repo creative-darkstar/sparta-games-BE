@@ -110,7 +110,8 @@ WSGI_APPLICATION = 'spartagames.wsgi.application'
 
 #CORS settings
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5713",  # React 앱 주소
+    "http://localhost:5173",  # React 앱 주소
+    # "http://127.0.0.1:8000",
 ]
 CORS_ALLOW_CREDENTIALS = True #인증 정보 포함 설정
 
