@@ -17,6 +17,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import permission_classes
 
 from .models import (
+    Chip,
     Game,
     Like,
     View,
@@ -62,7 +63,8 @@ class GameListAPIView(APIView):
 
     def get(self, request):
         order = request.query_params.get('order')
-        diff_time = timezone.now() - timedelta(hours=3)
+        new_game_chip = Chip.objects.filter(name="new_game").first()
+        limit = int(request.query_params.get('limit', 4))
         categories = list(GameCategory.objects.all().values_list('name',flat=True))
         if not categories:
             return Response({"message": "카테고리가 존재하지 않는다. 카테고리 생성이 필요하다"}, status=status.HTTP_404_NOT_FOUND)
@@ -70,11 +72,14 @@ class GameListAPIView(APIView):
             return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
         
-        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])
-        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])
-        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])
-        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)
-        recent_games = Game.objects.filter(created_at__gte=diff_time, is_visible=True, register_state=1)
+        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])[:limit]
+        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])[:limit]
+        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])[:limit]
+        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)[:limit]
+        if new_game_chip:
+            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1)[:limit]
+        else:
+            recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
         # 유저 존재 시 my_game_pack 추가
         my_game_pack = None
@@ -114,18 +119,28 @@ class GameListAPIView(APIView):
         serializer = GameListSerializer(rand1, many=True, context={'user': request.user})
         serializer2 = GameListSerializer(rand2, many=True, context={'user': request.user})
         serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
-        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else [{"message": "즐겨찾기한 게임이 없습니다."}]
-        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else [{"message": "최근 등록된 게임이 없습니다."}]
+        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else []
+        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else []
 
         # 응답 데이터 구성
         data = {
-            "rand1": [selected_categories[0], serializer.data] if rand1.exists() else [{"message": "게임이 없습니다."}],
-            "rand2": [selected_categories[1], serializer2.data] if rand2.exists() else [{"message": "게임이 없습니다."}],
-            "rand3": [selected_categories[2], serializer3.data] if rand3.exists() else [{"message": "게임이 없습니다."}],
-            "favorite": favorite_serializer,
+            "rand1": {
+                "category_name": selected_categories[0],
+                "game_list": serializer.data if rand1.exists() else []
+            },
+            "rand2": {
+                "category_name": selected_categories[1],
+                "game_list": serializer2.data if rand2.exists() else []
+            },
+            "rand3": {
+                "category_name": selected_categories[2],
+                "game_list": serializer3.data if rand3.exists() else []
+            },
+            "trending_games": favorite_serializer,
             "recent": recent_serializer,
-            "my_game_pack": my_game_pack,
         }
+        if request.user.is_authenticated:
+            data["my_game_pack"] = my_game_pack
         return Response(data, status=status.HTTP_200_OK)
 
     """
@@ -144,6 +159,25 @@ class GameListAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+        category_data = request.data.get('category')
+        invalid_categories = []
+        valid_categories = []
+
+        if category_data:
+            for item in category_data.split(','):
+                try:
+                    category = GameCategory.objects.get(name=item)
+                    valid_categories.append(category)  # 유효한 카테고리만 추가
+                except GameCategory.DoesNotExist:
+                    invalid_categories.append(item)
+
+        # 잘못된 카테고리가 있는 경우 오류 메시지 반환
+        if invalid_categories:
+            return Response(
+                {"message": f"다음 카테고리는 존재하지 않습니다: {', '.join(invalid_categories)}"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         # Game model에 우선 저장
         game = Game.objects.create(
             title=request.data.get('title'),
@@ -158,23 +192,11 @@ class GameListAPIView(APIView):
             review_cnt=0,
         )
 
-        # 카테고리 저장
-        category_data = request.data.get('category')
-        if category_data:
-            invalid_categories = []
-            for item in category_data.split(','):
-                try:
-                    category = GameCategory.objects.get(name=item)
-                    game.category.add(category)
-                except GameCategory.DoesNotExist:
-                    invalid_categories.append(item)
-            
-            # 존재하지 않는 카테고리가 있는 경우 오류 메시지 반환
-            if invalid_categories:
-                return Response(
-                    {"message": f"다음 카테고리는 존재하지 않습니다: {', '.join(invalid_categories)}"},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
+        for category in valid_categories:
+            game.category.add(category)
+
+        new_game_chip, created = Chip.objects.get_or_create(name="New Game")
+        game.chip.add(new_game_chip)
 
         # 이후 Screenshot model에 저장
         screenshots = list()

@@ -26,3 +26,17 @@ def assign_chips_to_top_games():
         game.chip.add(chip)
     
     return f"Assigned 'Daily Top' chip to {len(top_games)} games"
+
+@shared_task
+def cleanup_new_game_chip():
+    # 'New Game' 칩 가져오기
+    new_game_chip = Chip.objects.filter(name='New Game').first()
+    if not new_game_chip:
+        return "새로 생성된 게임 칩이 달린 게임이 없습니다."
+
+    # 현재 존재하는 'New Game' 칩을 제거
+    games_with_new_game = Game.objects.filter(chip=new_game_chip)
+    for game in games_with_new_game:
+        game.chip.remove(new_game_chip)
+
+    return f"Removed 'New Game' chip from {len(games_with_new_game)} games."
