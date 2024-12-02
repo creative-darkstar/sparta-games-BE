@@ -145,6 +145,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'games.tasks.assign_chips_to_top_games',
         'schedule': timedelta(minutes=1),  # 매일 한 번 실행
     },
+    'cleanup_new_game_chip':{
+        'task': 'games.tasks.cleanup_new_game_chip',
+        'schedule': timedelta(minutes=2),  # 12시간마다 실행
+    }
 }
 
 # Auth User Model - Custom
