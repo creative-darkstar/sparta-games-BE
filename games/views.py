@@ -64,6 +64,7 @@ class GameListAPIView(APIView):
     def get(self, request):
         order = request.query_params.get('order')
         new_game_chip = Chip.objects.filter(name="new_game").first()
+        limit = int(request.query_params.get('limit', 4))
         categories = list(GameCategory.objects.all().values_list('name',flat=True))
         if not categories:
             return Response({"message": "카테고리가 존재하지 않는다. 카테고리 생성이 필요하다"}, status=status.HTTP_404_NOT_FOUND)
@@ -71,12 +72,12 @@ class GameListAPIView(APIView):
             return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
         
-        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])
-        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])
-        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])
-        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)
+        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])[:limit]
+        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])[:limit]
+        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])[:limit]
+        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)[:limit]
         if new_game_chip:
-            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1)
+            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1)[:limit]
         else:
             recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
