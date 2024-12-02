@@ -706,6 +706,10 @@ def game_register(request, game_pk):
                 cursor = line.find('Build')
                 new_lines += line[:cursor] + \
                     f'/media/games/{game_folder}/' + line[cursor:]
+            elif line.find('canvas.style.width') > -1 or line.find('canvas.style.height') > -1:
+                is_check_build = True
+                cursor = line.find('\"')
+                new_lines += line[:cursor] + "\"100%\"\n"
             else:
                 new_lines += line
     # 추가할 JavaScript 코드 (iframe의 width, height 조절을 위해 추가함)
