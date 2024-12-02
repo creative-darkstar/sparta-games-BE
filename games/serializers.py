@@ -6,10 +6,11 @@ class GameListSerializer(serializers.ModelSerializer):
     maker_name = serializers.CharField(source='maker.nickname')
     chip_names= serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
+    category_name = serializers.SerializerMethodField()
     class Meta:
         model = Game
         fields = ("pk", "title", "thumbnail",
-                  "star", "maker_name","content","chip_names","is_liked")
+                  "star", "maker_name","content","chip_names","is_liked","category_name")
     
     def get_chip_names(self, obj):
         # Chip 객체의 name 필드를 리스트로 반환
@@ -21,6 +22,10 @@ class GameListSerializer(serializers.ModelSerializer):
         if user and user.is_authenticated:
             return Like.objects.filter(user=user, game=obj).exists()
         return False
+    
+    def get_category_name(self, obj):
+        # 카테고리 이름 리스트를 반환
+        return [category.name for category in obj.category.all()]
 
 
 class GameCreateSerializer(serializers.ModelSerializer):

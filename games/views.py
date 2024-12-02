@@ -114,18 +114,28 @@ class GameListAPIView(APIView):
         serializer = GameListSerializer(rand1, many=True, context={'user': request.user})
         serializer2 = GameListSerializer(rand2, many=True, context={'user': request.user})
         serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
-        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else [{"message": "즐겨찾기한 게임이 없습니다."}]
-        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else [{"message": "최근 등록된 게임이 없습니다."}]
+        favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else []
+        recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else []
 
         # 응답 데이터 구성
         data = {
-            "rand1": [selected_categories[0], serializer.data] if rand1.exists() else [{"message": "게임이 없습니다."}],
-            "rand2": [selected_categories[1], serializer2.data] if rand2.exists() else [{"message": "게임이 없습니다."}],
-            "rand3": [selected_categories[2], serializer3.data] if rand3.exists() else [{"message": "게임이 없습니다."}],
-            "favorite": favorite_serializer,
+            "rand1": {
+                "category_name": selected_categories[0],
+                "game_list": serializer.data if rand1.exists() else []
+            },
+            "rand2": {
+                "category_name": selected_categories[1],
+                "game_list": serializer2.data if rand2.exists() else []
+            },
+            "rand3": {
+                "category_name": selected_categories[2],
+                "game_list": serializer3.data if rand3.exists() else []
+            },
+            "trending_games": favorite_serializer,
             "recent": recent_serializer,
-            "my_game_pack": my_game_pack,
         }
+        if request.user.is_authenticated:
+            data["my_game_pack"] = my_game_pack
         return Response(data, status=status.HTTP_200_OK)
 
     """
