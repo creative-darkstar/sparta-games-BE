@@ -18,7 +18,7 @@ urlpatterns = [
     path("api/list/<int:game_pk>/playlog/", views.GamePlaytimeAPIView.as_view(), name="playlog"),
     path('api/chatbot/', views.ChatbotAPIView, name='chatbot'),
 
-    path("api/admin/list/", views.AdminGameListAPIView.as_view(), name="game_list"),
+    path("api/admin/list/", views.AdminGameList, name="game_list"),
     path("api/list/<int:game_pk>/register/", views.game_register, name="game_register"),
     path("api/list/<int:game_pk>/deny/", views.game_register_deny, name="game_register_deny"),
     path('api/list/<int:game_pk>/dzip/', views.game_dzip, name='game_dzip'),
