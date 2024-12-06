@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from datetime import timedelta
 from pathlib import Path
-
+from celery.schedules import crontab
 from . import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -143,12 +143,24 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
 CELERY_BEAT_SCHEDULE = {
     'assign-chips-every-day': {
         'task': 'games.tasks.assign_chips_to_top_games',
-        'schedule': timedelta(minutes=1),  # 매일 한 번 실행
+        'schedule': timedelta(minutes=1),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
     },
     'cleanup_new_game_chip':{
         'task': 'games.tasks.cleanup_new_game_chip',
-        'schedule': timedelta(minutes=2),  # 12시간마다 실행
-    }
+        'schedule': timedelta(minutes=2),
+    },
+    'assign-bookmark-top-chips-daily': {
+        'task': 'games.tasks.assign_bookmark_top_chips',
+        'schedule': timedelta(minutes=3),
+    },
+    'assign-long-play-chips-daily': {
+        'task': 'games.tasks.assign_long_play_chips',
+        'schedule': timedelta(minutes=4),
+    },
+    'assign-review-top-chips-daily': {
+        'task': 'games.tasks.assign_review_top_chips',
+        'schedule': timedelta(minutes=5),
+    },
 }
 
 # Auth User Model - Custom
