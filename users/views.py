@@ -8,7 +8,12 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from games.models import GameCategory
+from spartagames.pagination import CustomPagination
+from games.models import (
+    Game,
+    GameCategory,
+)
+from games.serializers import GameListSerializer
 
 
 # ---------- API---------- #
@@ -23,6 +28,11 @@ class ProfileAPIView(APIView):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
         profile_image = user.image.url if user.image else ''
         categories = list(user.game_category.values_list('name', flat=True))
+        if len(categories) > 3:
+            return Response(
+                {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         return Response({
             "user_pk": user_pk,
             "email": user.email,
@@ -225,10 +235,16 @@ def change_password(request, user_pk):
         status=status.HTTP_202_ACCEPTED
     )
 
+
 @api_view(["GET"])
 def my_games(request, user_pk):
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
     my_games = user.games.filter(is_visible=True).order_by('-created_at')
+    if not my_games.exists():
+        return Response(
+            {"message": f"{request.user}가 제작한 게임이 없습니다."},
+            status=status.HTTP_404_NOT_FOUND  # Not Found
+        )
 
     # 대상 일치 여부 확인
     if user != request.user:
@@ -249,16 +265,23 @@ def my_games(request, user_pk):
             "star": item.star,
             "review_cnt": item.review_cnt
         })
+    
+    # 페이지네이션 적용
+    paginator = CustomPagination()
+    paginated_data = paginator.paginate_queryset(item_list, request)
 
-    return Response({
-        "item_list": item_list
-    },status=status.HTTP_200_OK)
+    return paginator.get_paginated_response(paginated_data)
 
 
 @api_view(["GET"])
 def like_games(request, user_pk):
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
     like_games = user.like_games.filter(game__is_visible=True, game__register_state=1)
+    if not like_games.exists():
+        return Response(
+            {"message": f"{request.user}가 즐겨찾기한 게임이 없습니다."},
+            status=status.HTTP_404_NOT_FOUND  # Not Found
+        )
 
     item_list = list()
     for item in like_games:
@@ -281,9 +304,64 @@ def like_games(request, user_pk):
             "review_cnt": game.review_cnt
         })
 
-    return Response({
-        "item_list": item_list
-    },status=status.HTTP_200_OK)
+    # 페이지네이션 적용
+    paginator = CustomPagination()
+    paginated_data = paginator.paginate_queryset(item_list, request)
+
+    return paginator.get_paginated_response(paginated_data)
+
+
+@api_view(["GET"])
+def gamepacks(request, user_pk):
+    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    # 대상 일치 여부 확인
+    if user != request.user:
+        return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_200_OK)
+    
+    # 게임팩 세팅
+    # 1. 즐겨찾기한 게임
+    liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+    # 2. 최근 플레이한 게임
+    recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
+    
+    # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
+    liked_games_count = liked_games.count()
+    if liked_games_count < 4:
+        additional_recent_games = recently_played_games[:4 - liked_games_count]
+        combined_games = list(liked_games) + list(additional_recent_games)
+    else:
+        combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
+
+    # 리턴
+    if combined_games:
+        # 페이지네이션 적용
+        paginator = CustomPagination()
+        paginated_data = paginator.paginate_queryset(combined_games, request)
+        serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
+        return paginator.get_paginated_response(serializer.data)
+    else:
+        return Response({"message": "게임팩 조건에 맞는 게임이 존재하지 않습니다."}, status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+def recently_played_games(request, user_pk):
+    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    # 대상 일치 여부 확인
+    if user != request.user:
+        return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_200_OK)
+    
+    # 최근 플레이한 게임
+    recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
+
+    # 리턴
+    if recently_played_games:
+        # 페이지네이션 적용
+        paginator = CustomPagination()
+        paginated_data = paginator.paginate_queryset(recently_played_games, request)
+        serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
+        return paginator.get_paginated_response(serializer.data)
+    else:
+        return Response({"message": "최근 플레이한 게임이 존재하지 않습니다."}, status=status.HTTP_200_OK)
 
 
 # ---------- Web---------- #
