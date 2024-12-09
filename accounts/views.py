@@ -42,6 +42,11 @@ class SignUpAPIView(APIView):
         nickname = request.data.get("nickname")
         # game_category = request.data.getlist("game_category")
         game_category = request.data.get("game_category",[])
+        if len(game_category) > 3:
+            return Response(
+                {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         

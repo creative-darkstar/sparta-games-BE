@@ -28,6 +28,11 @@ class ProfileAPIView(APIView):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
         profile_image = user.image.url if user.image else ''
         categories = list(user.game_category.values_list('name', flat=True))
+        if len(categories) > 3:
+            return Response(
+                {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         return Response({
             "user_pk": user_pk,
             "email": user.email,
