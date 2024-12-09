@@ -5,7 +5,7 @@ import zipfile
 from django.core.files.storage import FileSystemStorage
 from django.http import FileResponse, Http404
 from django.shortcuts import render, get_object_or_404, redirect
-from django.db.models import Avg, Q
+from django.db.models import Avg, Q,Count
 from django.db.models.functions import Round
 
 from rest_framework.decorators import api_view
@@ -15,6 +15,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny  # 로그인 �
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import permission_classes
+
+from games.pagination import CategoryGamesPagination
 
 from .models import (
     Chip,
@@ -281,6 +283,44 @@ def game_list_search(request):
 
     return paginator.get_paginated_response(response_data)
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def category_games_list(request):
+    """
+    특정 카테고리에 속하는 게임 목록을 페이지네이션하여 반환하는 API.
+    URL: /api/list/categories/?category=<category_name>&page=<page_number>&limit=<page_size>
+    """
+    category_name = request.query_params.get('category', None)
+    
+    if not category_name:
+        return Response(
+            {"error": "category 파라미터가 필요합니다."},
+            status=400
+        )
+    
+    # 카테고리 존재 여부 확인
+    category = get_object_or_404(GameCategory, name=category_name)
+    
+    # 해당 카테고리에 속하는 게임 필터링
+    games = Game.objects.filter(
+        category=category,
+        is_visible=True,
+        register_state=1
+    ).order_by('-created_at')  # 최신순 정렬
+
+    if not games.exists():
+        return Response(
+            {"message": f"카테고리 '{category_name}'에 맞는 게임이 없습니다."},
+            status=404  # Not Found
+        )
+    
+    # 페이지네이션 적용
+    paginator = CategoryGamesPagination()
+    paginated_games = paginator.paginate_queryset(games, request)
+    serializer = GameListSerializer(paginated_games, many=True, context={'user': request.user})
+    
+    return paginator.get_paginated_response(serializer.data)
+
 class GameDetailAPIView(APIView):
     """
     포스트일 때 로그인 인증을 위한 함수
@@ -304,7 +344,7 @@ class GameDetailAPIView(APIView):
     def get(self, request, game_pk):
         game = self.get_object(game_pk)
 
-        serializer = GameDetailSerializer(game)
+        serializer = GameDetailSerializer(game, context={'user': request.user})
         # data에 serializer.data를 assignment
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
         data = serializer.data
@@ -430,34 +470,43 @@ class ReviewAPIView(APIView):
         return permissions
 
     def get(self, request, game_pk):
+        order = request.query_params.get('order', 'new')  # 기본값 'new'
         reviews = Review.objects.all().filter(game=game_pk, is_visible=True)
+
+        if order == 'likes':
+            reviews = reviews.annotate(
+                like_count=Count('reviewslike', filter=Q(reviewslike__is_like=1))
+            ).order_by('-like_count', '-created_at')
+        elif order == 'dislikes':
+            reviews = reviews.annotate(
+                dislike_count=Count('reviewslike', filter=Q(reviewslike__is_like=2))
+            ).order_by('-dislike_count', '-created_at')
+        else:
+            reviews = reviews.order_by('-created_at')  # 최신순
 
         if not reviews.exists():
             return Response({"message": "해당 게임에 리뷰가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
-        # 로그인한 경우
+        # 페이징 처리
+        paginator = CustomPagination()
+        paginated_reviews = paginator.paginate_queryset(reviews, request)
+        serializer = ReviewSerializer(paginated_reviews, many=True, context={'user': request.user})
+
+        response_data = {
+            "all_reviews": serializer.data,
+            "count": paginator.page.paginator.count,
+            "next": paginator.get_next_link(),
+            "previous": paginator.get_previous_link(),
+        }
+
+        # 로그인한 경우 사용자 리뷰 포함
         if request.user.is_authenticated:
-            reviews_serializer = ReviewSerializer(
-                reviews, many=True, context={'user': request.user})
             my_review = reviews.filter(author__pk=request.user.pk).first()
-            my_review_serializer = ReviewSerializer(
-                my_review, context={'user': request.user})
-            return Response(
-                {
-                    "my_review": my_review_serializer.data,
-                    "all_reviews": reviews_serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
-        # 로그인하지 않은 경우
-        else:
-            reviews_serializer = ReviewSerializer(reviews, many=True)
-            return Response(
-                {
-                    "all_reviews": reviews_serializer.data
-                },
-                status=status.HTTP_200_OK
-            )
+            if my_review:
+                my_review_serializer = ReviewSerializer(my_review, context={'user': request.user})
+                response_data["my_review"] = my_review_serializer.data
+
+        return paginator.get_paginated_response(response_data)
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정

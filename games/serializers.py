@@ -37,11 +37,18 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
 class GameDetailSerializer(serializers.ModelSerializer):
     maker_name = serializers.CharField(source='maker.nickname')
+    is_liked = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = "__all__"
         read_only_fields = ('maker',)
+
+    def get_is_liked(self, obj):
+        user = self.context.get('user')
+        if user and user.is_authenticated:
+            return Like.objects.filter(user=user, game=obj).exists()
+        return False
 
 
 class ReviewSerializer(serializers.ModelSerializer):

@@ -8,6 +8,7 @@ urlpatterns = [
     # ---------- API---------- #
     path("api/list/", views.GameListAPIView.as_view(), name="game_list"),
     path("api/list/search/", views.game_list_search, name="search"),
+    path('list/categories/', views.category_games_list, name='category_games_list'),
     path("api/list/<int:game_pk>/", views.GameDetailAPIView.as_view(), name="game_detail"),
     path("api/list/<int:game_pk>/like/", views.GameLikeAPIView.as_view(), name="game_like"),
     # path("api/list/<int:game_pk>/star/", views.GameStarAPIView.as_view(), name="game_star"),
