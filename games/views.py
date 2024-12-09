@@ -859,6 +859,23 @@ def ChatbotAPIView(request):
     return Response({"category": about_category}, status=status.HTTP_200_OK)
 
 
+# 관리자용 게임 승인/거절용 리스트
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def AdminGameList(request):
+    if (request.user.is_staff == False) or (request.user.is_superuser == False):
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    rows = Game.objects.filter(is_visible=True, register_state=0)
+
+    serializer = GameListSerializer(rows, many=True, context={'user': request.user})
+
+    # 응답 데이터 구성
+    data = {
+        "game_list": serializer.data,
+    }
+    return Response(data, status=status.HTTP_200_OK)
+
+
 # ---------- Web ---------- #
 
 
