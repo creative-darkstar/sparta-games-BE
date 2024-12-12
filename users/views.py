@@ -260,7 +260,7 @@ def my_games(request, user_pk):
             "thumbnail": item.thumbnail.url if item.thumbnail else None,
             "register_state": item.register_state,
             "created_at": item.created_at,
-            "category_list": category_list,
+            "category_name": category_list,
             "chip_list": chip_list,
             "star": item.star,
             "review_cnt": item.review_cnt
@@ -298,7 +298,7 @@ def like_games(request, user_pk):
             "thumbnail": game.thumbnail.url if game.thumbnail else None,
             "register_state": game.register_state,
             "created_at": game.created_at,
-            "category_list": category_list,
+            "category_name": category_list,
             "chip_list": chip_list,
             "star": game.star,
             "review_cnt": game.review_cnt
