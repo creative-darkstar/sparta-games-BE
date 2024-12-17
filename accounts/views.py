@@ -33,15 +33,16 @@ from games.models import GameCategory
 # ---------- API---------- #
 class SignUpAPIView(APIView):
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
+    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,30}$")
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
     def post(self, request):
+        login_type = request.data.get("login_type", "DEFAULT")
         email = request.data.get("email")
-        password = request.data.get("password")
-        password_check = request.data.get("password_check")
         nickname = request.data.get("nickname")
         # game_category = request.data.getlist("game_category")
-        game_category = request.data.get("game_category",[])
+        game_category = request.data.get("game_category", '')
+        game_category = game_category.split(',')
         if len(game_category) > 3:
             return Response(
                 {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
@@ -50,49 +51,88 @@ class SignUpAPIView(APIView):
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
+        login_type_list = [t[0] for t in get_user_model().LOGIN_TYPE_CHOICES]
+        # login_type 유효성 검사
+        if not login_type in login_type_list:
+            return Response({"error_message":"올바른 로그인 타입을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        
         # email 유효성 검사
         if not self.EMAIL_PATTERN.match(email):
             return Response({"error_message":"올바른 email을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(email=email).exists():
             return Response({"error_message":"이미 존재하는 email입니다.."}, status=status.HTTP_400_BAD_REQUEST)
         
-        # password 유효성 검사
-        if not self.PASSWORD_PATTERN.match(password):
-            return Response({"error_message":"올바른 password.password_check를 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
-        elif not password == password_check:
-            return Response({"error_message":"암호를 확인해주세요."}, status=status.HTTP_400_BAD_REQUEST)
-
         # nickname 유효성 검사
-        if len(nickname) > 30:
-            return Response({"error_message":"닉네임은 30자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
-        elif len(nickname) == 0:
+        if len(nickname) == 0:
             return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+        elif len(nickname) > 30 or len(nickname) < 4:
+            return Response({"error_message":"닉네임은 4자 이상 30자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        elif not self.NICKNAME_PATTERN.match(nickname):
+            return Response({"error_message":"올바른 닉네임을 입력해주세요. 4자 이상 30자 이하의 영숫자입니다."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(nickname=nickname).exists():
             return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # DB에 유저 등록
-        user = get_user_model().objects.create_user(
-            email = email,
-            password = password,
-            nickname = nickname,
-            user_tech = user_tech,
-            is_maker = is_maker,
-        )
-
+        
+        # 일반 로그인일 경우 비밀번호 유효성 검증 후 유저 데이터 추가
+        if login_type == "DEFAULT":
+            password = request.data.get("password")
+            password_check = request.data.get("password_check")
+            
+            # password 유효성 검사
+            if not self.PASSWORD_PATTERN.match(password):
+                return Response({"error_message":"올바른 password.password_check를 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            elif not password == password_check:
+                return Response({"error_message":"암호를 확인해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # DB에 유저 등록
+            user = get_user_model().objects.create_user(
+                email = email,
+                nickname = nickname,
+                password = password,
+                user_tech = user_tech,
+                is_maker = is_maker,
+                login_type = login_type,
+            )
+        # 소셜 로그인일 경우 비밀번호 데이터 제외 유저 데이터 추가
+        else:
+            # DB에 유저 등록
+            user = get_user_model().objects.create_user(
+                email = email,
+                nickname = nickname,
+                user_tech = user_tech,
+                is_maker = is_maker,
+                login_type = login_type,
+            )
+        
         # 카테고리 가져오기
         game_categories = GameCategory.objects.filter(name__in=game_category)
+        if not game_categories.exists():
+            return Response(
+                {"error_message": "올바른 game category를 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 관심 카테고리 등록
         user.game_category.set(game_categories)  # ManyToManyField 값 설정
         
-        return Response({
-            "message":"회원가입 성공",
-            "data":{
-                "email":user.email,
-                "nickname":user.nickname,
-                "game_category": game_category,
-                "user_tech": user_tech,
-                "is_maker": is_maker,
-            },
-        }, status=status.HTTP_201_CREATED)
+        # return Response({
+        #     "message":"회원가입 성공",
+        #     "data":{
+        #         "email":user.email,
+        #         "nickname":user.nickname,
+        #         "game_category": game_category,
+        #         "user_tech": user_tech,
+        #         "is_maker": is_maker,
+        #     },
+        # }, status=status.HTTP_201_CREATED)
+        
+        token = RefreshToken.for_user(user)
+        data = {
+            'user': user,
+            'access': str(token.access_token),
+            'refresh': str(token),
+        }
+        serializer = JWTSerializer(data)
+        return Response({'message': f'{login_type} 로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
 
 
 @api_view(('GET',))
@@ -136,11 +176,12 @@ def google_login_callback(request):
                 'refresh': str(token),
             }
             serializer = JWTSerializer(data)
-            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '구글 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
-                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'message': '구글 소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
+                'login_type': "GOOGLE",
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="구글")
         
@@ -197,13 +238,14 @@ def naver_login_callback(request):
             }
             serializer = JWTSerializer(data)
             return Response({
-                'message': '소셜 로그인 성공, 기존 회원입니다.',
+                'message': '네이버 소셜 로그인 성공, 기존 회원입니다.',
                 **serializer.data
                 }, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
-                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'message': '네이버 소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
+                'login_type': "NAVER",
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="네이버")
 
@@ -264,13 +306,14 @@ def kakao_login_callback(request):
                 'refresh': str(token),
             }
             serializer = JWTSerializer(data)
-            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '카카오 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
-                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'message': '카카오 소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
                 'nickname': nickname,
                 'account': account,
+                'login_type': "KAKAO",
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="카카오")
 
@@ -332,12 +375,13 @@ def discord_login_callback(request):
                 'refresh': str(token),
             }
             serializer = JWTSerializer(data)
-            return Response({'message': '소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '디스코드 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
-                'message': '소셜 로그인 성공, 회원가입이 필요합니다.',
+                'message': '디스코드 소셜 로그인 성공, 회원가입이 필요합니다.',
                 'email': email,
                 'nickname': nickname,
+                'login_type': "DISCORD",
             }, status=status.HTTP_200_OK)
         # return social_signinup(email=email, username=username, provider="디스코드")
 
@@ -352,23 +396,23 @@ def discord_login_callback(request):
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
-# 회원가입 또는 로그인을 처리하는 함수
-def social_signinup(email, username, provider=''):
-    try:
-        user = get_user_model().objects.get(email=email)
-    except get_user_model().DoesNotExist:
-        user = None
-    if user is None:
-        return Response({"message": "회원가입 페이지로 이동", "username": username, "email": email})
+# # 회원가입 또는 로그인을 처리하는 함수
+# def social_signinup(email, provider=''):
+#     try:
+#         user = get_user_model().objects.get(email=email)
+#     except get_user_model().DoesNotExist:
+#         user = None
+#     if user is None:
+#         return Response({"message": "회원가입 페이지로 이동", "email": email})
 
-    token = RefreshToken.for_user(user)
-    data = {
-        'user': user,
-        'access': str(token.access_token),
-        'refresh': str(token),
-    }
-    serializer = JWTSerializer(data)
-    return Response({'message': f'{provider} 로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+#     token = RefreshToken.for_user(user)
+#     data = {
+#         'user': user,
+#         'access': str(token.access_token),
+#         'refresh': str(token),
+#     }
+#     serializer = JWTSerializer(data)
+#     return Response({'message': f'{provider} 로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
 
 
 # ---------- Web---------- #
