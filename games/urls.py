@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/admin/list/", views.AdminGameList, name="game_list"),
     path("api/list/<int:game_pk>/register/", views.game_register, name="game_register"),
     path("api/list/<int:game_pk>/deny/", views.game_register_deny, name="game_register_deny"),
+    path("api/denylog/<int:game_pk>/", views.deny_log, name="deny_log"),
     path('api/list/<int:game_pk>/dzip/', views.game_dzip, name='game_dzip'),
 
     # ---------- Web ---------- #
