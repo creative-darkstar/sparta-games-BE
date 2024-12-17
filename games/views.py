@@ -4,7 +4,7 @@ import zipfile
 
 from django.core.files.storage import FileSystemStorage
 from django.http import FileResponse, Http404
-from django.shortcuts import render, get_object_or_404, redirect
+from django.shortcuts import render, get_object_or_404, get_list_or_404, redirect
 from django.db.models import Avg, Q,Count
 from django.db.models.functions import Round
 
@@ -29,6 +29,7 @@ from .models import (
     ReviewsLike,
     PlayLog,
     TotalPlayTime,
+    DenyLog,
 )
 from accounts.models import BotCnt
 from .serializers import (
@@ -815,11 +816,23 @@ def game_register_deny(request, game_pk):
     # 관리자 여부 확인
     if request.user.is_staff is False:
         return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    # # 등록 거부 사유 없을 시 400 (추후 추가)
+    # if request.data.get("deny_content", None) is None:
+    #     return Response({"error": "반려 사유가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-    row = get_object_or_404(
+    # 게임 정보 수정
+    game = get_object_or_404(
         Game, pk=game_pk, is_visible=True, register_state=0)
-    row.register_state = 2
-    row.save()
+    game.register_state = 2
+    game.save()
+    
+    # 등록 거부 사유 로그 추가
+    DenyLog.objects.create(
+        admin=request.user,
+        maker=game.maker,
+        game=game,
+        deny_content=request.data.get("deny_content")
+    )
 
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     # return redirect("games:admin_list")
@@ -856,6 +869,31 @@ def game_dzip(request, game_pk):
 
     # FileResponse 객체를 리턴
     return response
+
+
+# 게임 등록 거부 사유 불러오는 API
+@api_view(['GET'])
+def deny_log(request, game_pk):
+    # 등록 거부된 게임 정보 불러오기
+    game = get_object_or_404(
+        Game, pk=game_pk, is_visible=True, register_state=2)
+    
+    # 관리자, 메이커 여부 확인
+    if not (request.user.is_staff is True or request.user == game.maker):
+        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+
+    # 로그 불러오기
+    rows = DenyLog.objects.filter(game=game)
+    if not rows.exists():
+        return Response({"error": "등록 거부된 적이 없는 게임입니다."}, status=status.HTTP_400_BAD_REQUEST)
+    row = rows.order_by("-created_at").first()
+
+    return Response(
+        {
+            "deny_content": row.deny_content
+        },
+        status=status.HTTP_200_OK
+    )
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)

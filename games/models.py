@@ -148,6 +148,20 @@ class Screenshot(models.Model):
     )
 
 
+class DenyLog(models.Model):
+    admin = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="deny_logs_admin"
+    )
+    maker = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="deny_logs_maker"
+    )
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="deny_logs_game"
+    )
+    deny_content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 # class Star(models.Model):
 #     star = models.IntegerField(null=True)
 #     user = models.ForeignKey(
