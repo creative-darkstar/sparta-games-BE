@@ -33,7 +33,7 @@ from games.models import GameCategory
 # ---------- API---------- #
 class SignUpAPIView(APIView):
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
-    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,30}$")
+    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,10}$")
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
     def post(self, request):
@@ -66,9 +66,9 @@ class SignUpAPIView(APIView):
         if len(nickname) == 0:
             return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
         elif len(nickname) > 30 or len(nickname) < 4:
-            return Response({"error_message":"닉네임은 4자 이상 30자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error_message":"닉네임은 4자 이상 10자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
         elif not self.NICKNAME_PATTERN.match(nickname):
-            return Response({"error_message":"올바른 닉네임을 입력해주세요. 4자 이상 30자 이하의 영숫자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error_message":"올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 영숫자입니다."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(nickname=nickname).exists():
             return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
         
