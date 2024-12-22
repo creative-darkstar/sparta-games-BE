@@ -13,8 +13,20 @@ class GameListSerializer(serializers.ModelSerializer):
                   "star", "maker_name","content","chip_names","is_liked","category_name")
     
     def get_chip_names(self, obj):
+        #칩 우선순위 리스트
+        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
+        chips = obj.chip.all()
+        difficulty_chips = ["EASY", "NORMAL", "HARD"]
+        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
+        result = [difficulty_chip.name] if difficulty_chip else []
+
+        for priority_chip in priority_chips:
+            if len(result) < 3:  # Limit to a maximum of 3 chips
+                chip = chips.filter(name=priority_chip).first()
+                if chip:
+                    result.append(chip.name)
         # Chip 객체의 name 필드를 리스트로 반환
-        return [chip.name for chip in obj.chip.all()]
+        return result
     
     def get_is_liked(self, obj):
         user = self.context.get('user')
@@ -38,6 +50,7 @@ class GameCreateSerializer(serializers.ModelSerializer):
 class GameDetailSerializer(serializers.ModelSerializer):
     maker_name = serializers.CharField(source='maker.nickname')
     is_liked = serializers.SerializerMethodField()
+    chip_names= serializers.SerializerMethodField()
 
     class Meta:
         model = Game
@@ -49,6 +62,22 @@ class GameDetailSerializer(serializers.ModelSerializer):
         if user and user.is_authenticated:
             return Like.objects.filter(user=user, game=obj).exists()
         return False
+    
+    def get_chip_names(self, obj):
+        #칩 우선순위 리스트
+        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
+        chips = obj.chip.all()
+        difficulty_chips = ["EASY", "NORMAL", "HARD"]
+        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
+        result = [difficulty_chip.name] if difficulty_chip else []
+
+        for priority_chip in priority_chips:
+            if len(result) < 3:  # Limit to a maximum of 3 chips
+                chip = chips.filter(name=priority_chip).first()
+                if chip:
+                    result.append(chip.name)
+        # Chip 객체의 name 필드를 리스트로 반환
+        return result
 
 
 class ReviewSerializer(serializers.ModelSerializer):

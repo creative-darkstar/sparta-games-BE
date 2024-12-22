@@ -47,6 +47,7 @@ from datetime import timedelta
 from spartagames.pagination import CustomPagination
 import random
 from urllib.parse import urlencode
+from .utils import assign_chip_based_on_difficulty
 
 class GameListAPIView(APIView):
     """
@@ -201,6 +202,10 @@ class GameListAPIView(APIView):
 
         new_game_chip, created = Chip.objects.get_or_create(name="New Game")
         game.chip.add(new_game_chip)
+
+        # 기본 'NORMAL' 칩 추가
+        normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+        game.chip.add(normal_chip)
 
         # 이후 Screenshot model에 저장
         screenshots = list()
@@ -543,6 +548,7 @@ class ReviewAPIView(APIView):
             data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
+            assign_chip_based_on_difficulty(game)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -585,6 +591,7 @@ class ReviewDetailAPIView(APIView):
                 review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
+                assign_chip_based_on_difficulty(review.game)
                 return Response(serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         else:
@@ -611,6 +618,7 @@ class ReviewDetailAPIView(APIView):
             game.save()
             review.is_visible = False
             review.save()
+            assign_chip_based_on_difficulty(review.game)
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
