@@ -16,7 +16,7 @@ from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.decorators import permission_classes
 
-from games.pagination import CategoryGamesPagination
+from games.pagination import CategoryGamesPagination, ReviewPagination
 
 from .models import (
     Chip,
@@ -46,6 +46,8 @@ from django.utils import timezone
 from datetime import timedelta
 from spartagames.pagination import CustomPagination
 import random
+from urllib.parse import urlencode
+from .utils import assign_chip_based_on_difficulty
 
 class GameListAPIView(APIView):
     """
@@ -66,7 +68,7 @@ class GameListAPIView(APIView):
 
     def get(self, request):
         order = request.query_params.get('order')
-        new_game_chip = Chip.objects.filter(name="new_game").first()
+        new_game_chip = Chip.objects.filter(name="New Game").first()
         limit = int(request.query_params.get('limit', 4))
         categories = list(GameCategory.objects.all().values_list('name',flat=True))
         if not categories:
@@ -78,7 +80,7 @@ class GameListAPIView(APIView):
         rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])[:limit]
         rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])[:limit]
         rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])[:limit]
-        favorites = Game.objects.filter(chip="1",is_visible=True, register_state=1)[:limit]
+        favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1)[:limit]
         if new_game_chip:
             recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1)[:limit]
         else:
@@ -200,6 +202,10 @@ class GameListAPIView(APIView):
 
         new_game_chip, created = Chip.objects.get_or_create(name="New Game")
         game.chip.add(new_game_chip)
+
+        # 기본 'NORMAL' 칩 추가
+        normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+        game.chip.add(normal_chip)
 
         # 이후 Screenshot model에 저장
         screenshots = list()
@@ -472,8 +478,18 @@ class ReviewAPIView(APIView):
 
     def get(self, request, game_pk):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
-        reviews = Review.objects.all().filter(game=game_pk, is_visible=True)
 
+        # 모든 리뷰 가져오기
+        reviews = Review.objects.filter(game=game_pk, is_visible=True)
+
+        # 로그인 상태에서 내 리뷰 추출
+        my_review = None
+        if request.user.is_authenticated:
+            my_review = reviews.filter(author=request.user).first()
+            if my_review:
+                reviews = reviews.exclude(pk=my_review.pk)  # 내 리뷰 제외
+
+        # 정렬 조건 적용
         if order == 'likes':
             reviews = reviews.annotate(
                 like_count=Count('reviewslike', filter=Q(reviewslike__is_like=1))
@@ -485,29 +501,35 @@ class ReviewAPIView(APIView):
         else:
             reviews = reviews.order_by('-created_at')  # 최신순
 
-        if not reviews.exists():
-            return Response({"message": "해당 게임에 리뷰가 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        # `my_review`를 포함한 쿼리셋 생성
+        if my_review:
+            all_reviews = [my_review] + list(reviews)
+        else:
+            all_reviews = list(reviews)
 
-        # 페이징 처리
-        paginator = CustomPagination()
-        paginated_reviews = paginator.paginate_queryset(reviews, request)
+        # 페이지네이션 처리
+        paginator = ReviewPagination()
+        paginated_reviews = paginator.paginate_queryset(all_reviews, request, self)
+
+        if paginated_reviews is None:
+            return Response({"message": "리뷰가 없습니다."}, status=404)
+
+        # 직렬화
         serializer = ReviewSerializer(paginated_reviews, many=True, context={'user': request.user})
 
-        response_data = {
-            "all_reviews": serializer.data,
-            "count": paginator.page.paginator.count,
-            "next": paginator.get_next_link(),
-            "previous": paginator.get_previous_link(),
-        }
+        # 페이징 결과 직렬화
+        response_data=paginator.get_paginated_response(serializer.data).data
+        # 1페이지일 때만 `my_review` 추가
+        # 1페이지일 경우 my_review를 처리
+        if paginator.page.number == 1 and my_review:
+            my_review_serializer = ReviewSerializer(my_review, context={'user': request.user})
+            all_reviews = response_data["results"]["all_reviews"]
 
-        # 로그인한 경우 사용자 리뷰 포함
-        if request.user.is_authenticated:
-            my_review = reviews.filter(author__pk=request.user.pk).first()
-            if my_review:
-                my_review_serializer = ReviewSerializer(my_review, context={'user': request.user})
-                response_data["my_review"] = my_review_serializer.data
+            # 기존 첫 번째 리뷰를 빈 값으로 대체
+            
+            response_data["results"]["my_review"] = all_reviews.pop(0)
 
-        return paginator.get_paginated_response(response_data)
+        return Response(response_data) 
 
     def post(self, request, game_pk):
         game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
@@ -526,6 +548,7 @@ class ReviewAPIView(APIView):
             data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
+            assign_chip_based_on_difficulty(game)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -568,6 +591,7 @@ class ReviewDetailAPIView(APIView):
                 review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
+                assign_chip_based_on_difficulty(review.game)
                 return Response(serializer.data, status=status.HTTP_200_OK)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         else:
@@ -594,6 +618,7 @@ class ReviewDetailAPIView(APIView):
             game.save()
             review.is_visible = False
             review.save()
+            assign_chip_based_on_difficulty(review.game)
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)

@@ -147,7 +147,7 @@ CELERY_BEAT_SCHEDULE = {
     },
     'cleanup_new_game_chip':{
         'task': 'games.tasks.cleanup_new_game_chip',
-        'schedule': timedelta(minutes=2),
+        'schedule': timedelta(minutes=10),
     },
     'assign-bookmark-top-chips-daily': {
         'task': 'games.tasks.assign_bookmark_top_chips',
