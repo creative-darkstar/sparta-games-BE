@@ -92,7 +92,7 @@ class TotalPlayTime(models.Model):
         Game, on_delete=models.CASCADE, related_name="totalplaytime"
     )
     latest_at = models.DateTimeField(null=True)
-    totaltime = models.IntegerField(null=True)
+    totaltime = models.IntegerField(default=0)
 
 
 # 기존 Comment 테이블
