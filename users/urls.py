@@ -12,7 +12,7 @@ urlpatterns = [
     path("api/<int:user_pk>/password/", views.change_password, name="change_password"),
     path("api/<int:user_pk>/games/", views.my_games, name="my_games"),
     path("api/<int:user_pk>/likes/", views.like_games, name="like_games"),
-    # path("api/<int:user_pk>/gamepacks/", views.gamepacks, name="gamepacks"),    # 2024-12-23 유저 페이지 게임팩 API 삭제
+    path("api/<int:user_pk>/gamepacks/", views.gamepacks, name="gamepacks"),    # 2024-12-30 유저 페이지 게임팩 API 복구
     path("api/<int:user_pk>/recent/", views.recently_played_games, name="recent_played_games"),
     
     # ---------- Web---------- #

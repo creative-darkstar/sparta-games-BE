@@ -86,29 +86,30 @@ class GameListAPIView(APIView):
         else:
             recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
-        # 유저 존재 시 my_game_pack 추가
-        my_game_pack = None
-        if request.user.is_authenticated:
-            # 1. 즐겨찾기한 게임
-            liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
-            # 2. 최근 플레이한 게임
-            recently_played_games = Game.objects.filter(is_visible=True, register_state=1,totalplaytime__user=request.user).order_by('-totalplaytime__latest_at').distinct()
+        # 2024-12-30 FE 요청으로 games/api/list 에서 게임팩 삭제, users/api/<int:user_pk>/gamepacks/ 로 이관
+        # # 유저 존재 시 my_game_pack 추가
+        # my_game_pack = None
+        # if request.user.is_authenticated:
+        #     # 1. 즐겨찾기한 게임
+        #     liked_games = Game.objects.filter(likes__user=request.user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+        #     # 2. 최근 플레이한 게임
+        #     recently_played_games = Game.objects.filter(is_visible=True, register_state=1,totalplaytime__user=request.user).order_by('-totalplaytime__latest_at').distinct()
             
-            # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
-            liked_games_count = liked_games.count()
-            if liked_games_count < 4:
-                additional_recent_games = recently_played_games[:4 - liked_games_count]
-                combined_games = list(liked_games) + list(additional_recent_games)
-            else:
-                combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
+        #     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
+        #     liked_games_count = liked_games.count()
+        #     if liked_games_count < 4:
+        #         additional_recent_games = recently_played_games[:4 - liked_games_count]
+        #         combined_games = list(liked_games) + list(additional_recent_games)
+        #     else:
+        #         combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
 
-            # my_game_pack 설정
-            if combined_games:
-                my_game_pack = GameListSerializer(combined_games, many=True, context={'user': request.user}).data
-            else:
-                my_game_pack = [{"message": "게임이 없습니다."}]
-        else:
-            my_game_pack = [{"message": "사용자가 인증되지 않았습니다."}]
+        #     # my_game_pack 설정
+        #     if combined_games:
+        #         my_game_pack = GameListSerializer(combined_games, many=True, context={'user': request.user}).data
+        #     else:
+        #         my_game_pack = [{"message": "게임이 없습니다."}]
+        # else:
+        #     my_game_pack = [{"message": "사용자가 인증되지 않았습니다."}]
 
         # 추가 옵션 정렬
         """ if order == 'new':
@@ -144,8 +145,9 @@ class GameListAPIView(APIView):
             "trending_games": favorite_serializer,
             "recent": recent_serializer,
         }
-        if request.user.is_authenticated:
-            data["my_game_pack"] = my_game_pack
+        # 2024-12-30 FE 요청으로 games/api/list 에서 게임팩 삭제, users/api/<int:user_pk>/gamepacks/ 로 이관
+        # if request.user.is_authenticated:
+        #     data["my_game_pack"] = my_game_pack
         return Response(data, status=status.HTTP_200_OK)
 
     """
