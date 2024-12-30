@@ -333,36 +333,37 @@ def like_games(request, user_pk):
 
 
 # 2024-12-23 유저 페이지 게임팩 API 삭제
-# @api_view(["GET"])
-# def gamepacks(request, user_pk):
-#     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
-#     # 대상 일치 여부 확인
-#     if user != request.user:
-#         return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_200_OK)
+# 2024-12-30 유저 페이지 게임팩 API 복구
+@api_view(["GET"])
+def gamepacks(request, user_pk):
+    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    # 대상 일치 여부 확인
+    if user != request.user:
+        return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_200_OK)
     
-#     # 게임팩 세팅
-#     # 1. 즐겨찾기한 게임
-#     liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
-#     # 2. 최근 플레이한 게임
-#     recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
+    # 게임팩 세팅
+    # 1. 즐겨찾기한 게임
+    liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+    # 2. 최근 플레이한 게임
+    recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
     
-#     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
-#     liked_games_count = liked_games.count()
-#     if liked_games_count < 4:
-#         additional_recent_games = recently_played_games[:4 - liked_games_count]
-#         combined_games = list(liked_games) + list(additional_recent_games)
-#     else:
-#         combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
+    # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
+    liked_games_count = liked_games.count()
+    if liked_games_count < 4:
+        additional_recent_games = recently_played_games[:4 - liked_games_count]
+        combined_games = list(liked_games) + list(additional_recent_games)
+    else:
+        combined_games = liked_games  # 좋아요한 게임만으로 4개가 이미 채워짐
 
-#     # 리턴
-#     if combined_games:
-#         # 페이지네이션 적용
-#         paginator = CustomPagination()
-#         paginated_data = paginator.paginate_queryset(combined_games, request)
-#         serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
-#         return paginator.get_paginated_response(serializer.data)
-#     else:
-#         return Response({"message": "게임팩 조건에 맞는 게임이 존재하지 않습니다."}, status=status.HTTP_200_OK)
+    # 리턴
+    if combined_games:
+        # 페이지네이션 적용
+        paginator = CustomPagination()
+        paginated_data = paginator.paginate_queryset(combined_games, request)
+        serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
+        return paginator.get_paginated_response(serializer.data)
+    else:
+        return Response({"message": "게임팩 조건에 맞는 게임이 존재하지 않습니다."}, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])
