@@ -287,7 +287,7 @@ def my_games(request, user_pk):
 @api_view(["GET"])
 def like_games(request, user_pk):
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
-    like_games = user.like_games.filter(game__is_visible=True, game__register_state=1)
+    like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
         return Response(
             {"message": f"{request.user}가 즐겨찾기한 게임이 없습니다."},
