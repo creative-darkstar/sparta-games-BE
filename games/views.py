@@ -226,74 +226,52 @@ class GameListAPIView(APIView):
 @api_view(['GET'])
 @permission_classes([AllowAny])  # 인증이 필요할 경우 IsAuthenticated로 변경 가능
 def game_list_search(request):
-    category_q = request.query_params.get('category-q')
-    game_q = request.query_params.get('game-q')
-    maker_q = request.query_params.get('maker-q')
-    gm_q = request.query_params.get('gm-q')
-    order = request.query_params.get('order')
+    keyword = request.query_params.get('keyword')
 
-    # 누적 조건 필터링을 위한 Q 객체 초기화
+    # 기본 필터 조건
     query = Q(is_visible=True, register_state=1)
 
-    # 검색 옵션에 따라 Q 객체에 조건 추가
-    search_tags = []
-    if category_q:
-        query &= Q(category__name=category_q)
-        search_tags.append(f"카테고리: {category_q}")
-    if game_q:
-        query &= Q(title__icontains=game_q)
-        search_tags.append(f"게임 이름: {game_q}")
-    if maker_q:
-        query &= Q(maker__nickname__icontains=maker_q)
-        search_tags.append(f"제작자: {maker_q}")
-    if gm_q:
-        query &= Q(title__icontains=gm_q) | Q(maker__nickname__icontains=gm_q)
-        search_tags.append(f"일반 검색: {gm_q}")
+    # 키워드 조건 추가
+    if keyword:
+        query &= Q(
+            Q(category__name__icontains=keyword) |
+            Q(title__icontains=keyword) |
+            Q(maker__nickname__icontains=keyword)
+        )
 
-    # 누적된 조건으로 게임 필터링
-    rows = Game.objects.filter(query)
+    # 게임 목록 필터링
+    games = Game.objects.filter(query).distinct().order_by('-created_at')
 
-    # 결과가 없는 경우 메시지 반환
-    if not rows.exists():
-        search_summary = ", ".join(search_tags) if search_tags else "모든 게임"
-        return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
-
-    # 정렬 옵션
-    if order == 'new':
-        rows = rows.order_by('-created_at')
-    elif order == 'view':
-        rows = rows.order_by('-view_cnt')
-    elif order == 'star':
-        rows = rows.order_by('-star')
-    else:
-        rows = rows.order_by('-created_at')
-
-    # 좋아요 게임 목록 가져오기
+    # 즐겨찾기 분리
     favorite_games = []
     if request.user.is_authenticated:
-        favorite_games = rows.filter(likes__user=request.user)
-
-    # 결과가 없는 경우 메시지 반환
-    if not rows.exists() and not favorite_games:
-        search_summary = ", ".join(search_tags) if search_tags else "모든 게임"
-        return Response({"message": f"해당 검색 [{search_summary}]에 맞는 게임이 없습니다."}, status=404)
-    
-    # 페이지네이션
+        favorite_games = games.filter(likes__user=request.user)
+        favorite_cnt=len(favorite_games)
+        if favorite_games:
+            games = games.exclude(pk__in=favorite_games.values_list('pk', flat=True))
+    all_games = list(favorite_games) + list(games)
+    if all_games==[]:
+        return Response({"message": "게임이 없습니다."}, status=404)
+    # 페이지네이션 처리
     paginator = CustomPagination()
-    result = paginator.paginate_queryset(rows, request)
-    serializer = GameListSerializer(result, many=True,context={'user': request.user})
-    
-    # 좋아요한 게임 직렬화
-    favorite_serializer = GameListSerializer(favorite_games, many=True,context={'user': request.user})
+    paginated_games = paginator.paginate_queryset(all_games, request)
 
-    # 응답 데이터에 좋아요 게임 포함
-    response_data = {
-        "results": serializer.data,
-        "favorite_games": favorite_serializer.data if request.user.is_authenticated else []
-    }
+    # 직렬화
+    game_serializer = GameListSerializer(paginated_games, many=True, context={'user': request.user})
 
-    return paginator.get_paginated_response(response_data)
+    # 응답 데이터 구성
+    response_data = paginator.get_paginated_response(game_serializer.data).data
 
+    # 1페이지일 경우 즐겨찾기 게임 추가
+    if paginator.page.number == 1 and favorite_games.exists():
+        all_games=response_data["results"]["all_games"]
+        list_of_games=[]
+        for i in range(favorite_cnt):
+            list_of_games.append(all_games.pop(i))
+            all_games.insert(0,{})
+        response_data["results"]["favorite_games"]=list_of_games
+
+    return Response(response_data)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -554,12 +532,9 @@ class ReviewAPIView(APIView):
         # 1페이지일 때만 `my_review` 추가
         # 1페이지일 경우 my_review를 처리
         if paginator.page.number == 1 and my_review:
-            my_review_serializer = ReviewSerializer(my_review, context={'user': request.user})
             all_reviews = response_data["results"]["all_reviews"]
-
-            # 기존 첫 번째 리뷰를 빈 값으로 대체
-            
             response_data["results"]["my_review"] = all_reviews.pop(0)
+            all_reviews.insert(0,{})
 
         return Response(response_data) 
 
