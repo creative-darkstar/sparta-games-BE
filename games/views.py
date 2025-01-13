@@ -502,11 +502,11 @@ class ReviewAPIView(APIView):
         # 정렬 조건 적용
         if order == 'likes':
             reviews = reviews.annotate(
-                like_count=Count('reviewslike', filter=Q(reviewslike__is_like=1))
+                like_count=Count('reviews', filter=Q(reviews__is_like=1))
             ).order_by('-like_count', '-created_at')
         elif order == 'dislikes':
             reviews = reviews.annotate(
-                dislike_count=Count('reviewslike', filter=Q(reviewslike__is_like=2))
+                dislike_count=Count('reviews', filter=Q(reviews__is_like=2))
             ).order_by('-dislike_count', '-created_at')
         else:
             reviews = reviews.order_by('-created_at')  # 최신순
