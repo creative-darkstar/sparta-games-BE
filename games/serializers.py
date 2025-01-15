@@ -81,6 +81,8 @@ class GameDetailSerializer(serializers.ModelSerializer):
 
 
 class ReviewSerializer(serializers.ModelSerializer):
+    author_id = serializers.IntegerField(source='author.id', read_only=True)
+    game_id = serializers.IntegerField(source='game.id', read_only=True)
     author_name = serializers.CharField(
         source='author.nickname', read_only=True)
     src = serializers.ImageField(source='author.image', read_only=True)
@@ -90,7 +92,11 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Review
-        fields = "__all__"
+        fields = [
+            'id','author_name','src','like_count','dislike_count','user_is_like',
+            'content','star','difficulty','is_visible','created_at','updated_at',
+            'author_id','game_id',
+        ]
         read_only_fields = ('is_visible', 'game', 'author',)
     
     def get_like_count(self, obj):
