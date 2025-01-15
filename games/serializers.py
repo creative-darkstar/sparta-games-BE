@@ -85,7 +85,6 @@ class ReviewSerializer(serializers.ModelSerializer):
     game_id = serializers.IntegerField(source='game.id', read_only=True)
     author_name = serializers.CharField(
         source='author.nickname', read_only=True)
-    src = serializers.ImageField(source='author.image', read_only=True)
     like_count = serializers.SerializerMethodField()
     dislike_count = serializers.SerializerMethodField()
     user_is_like = serializers.SerializerMethodField()
@@ -93,7 +92,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = [
-            'id','author_name','src','like_count','dislike_count','user_is_like',
+            'id','author_name','like_count','dislike_count','user_is_like',
             'content','star','difficulty','is_visible','created_at','updated_at',
             'author_id','game_id',
         ]
@@ -116,13 +115,6 @@ class ReviewSerializer(serializers.ModelSerializer):
         review_like = ReviewsLike.objects.filter(review=obj, user=user).first()
         # 리뷰 상태가 존재하면 그 값을 반환, 없으면 0을 반환
         return review_like.is_like if review_like else 0
-        """ # 사용자가 해당 리뷰에 남긴 상태를 조회
-        if user:
-            review_like = ReviewsLike.objects.filter(review=obj, user=user).first()
-            # 리뷰 상태가 존재하면 그 값을 반환, 없으면 0을 반환
-            return review_like.is_like if review_like else 0
-        else:
-            return 0 """
 
 
 class ScreenshotSerializer(serializers.ModelSerializer):

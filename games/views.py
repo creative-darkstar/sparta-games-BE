@@ -37,7 +37,7 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
-from spartagames.pagination import CustomPagination
+from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
 from .utils import assign_chip_based_on_difficulty
@@ -253,7 +253,7 @@ def game_list_search(request):
     if all_games==[]:
         return Response({"message": "게임이 없습니다."}, status=404)
     # 페이지네이션 처리
-    paginator = CustomPagination()
+    paginator = ReviewCustomPagination()
     paginated_games = paginator.paginate_queryset(all_games, request)
 
     # 직렬화
@@ -263,13 +263,14 @@ def game_list_search(request):
     response_data = paginator.get_paginated_response(game_serializer.data).data
 
     # 1페이지일 경우 즐겨찾기 게임 추가
-    if paginator.page.number == 1 and favorite_games.exists():
-        all_games=response_data["results"]["all_games"]
-        list_of_games=[]
-        for i in range(favorite_cnt):
-            list_of_games.append(all_games.pop(i))
-            all_games.insert(0,{})
-        response_data["results"]["favorite_games"]=list_of_games
+    if request.user.is_authenticated:
+        if paginator.page.number == 1 and favorite_games.exists():
+            all_games=response_data["results"]["all_games"]
+            list_of_games=[]
+            for i in range(favorite_cnt):
+                list_of_games.append(all_games.pop(i))
+                all_games.insert(0,{})
+            response_data["results"]["favorite_games"]=list_of_games
 
     return Response(response_data)
 
