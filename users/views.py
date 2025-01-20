@@ -9,6 +9,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from spartagames.pagination import CustomPagination
+
+from .serializers import MyGameListSerializer
+
 from games.models import (
     Game,
     GameCategory,
@@ -256,7 +259,7 @@ def my_games(request, user_pk):
     paginated_data = paginator.paginate_queryset(my_games, request)
     
     # 시리얼라이저 적용
-    serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
+    serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user})
     
     # 리턴
     return paginator.get_paginated_response(serializer.data)
