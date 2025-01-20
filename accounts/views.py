@@ -1,4 +1,3 @@
-import secrets
 from django.shortcuts import render
 
 from rest_framework.views import APIView
@@ -6,9 +5,9 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
 
-
-from dj_rest_auth.serializers import JWTSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.views import TokenObtainPairView
 
 from django.contrib import messages
 from django.contrib.auth import get_user_model
@@ -31,6 +30,43 @@ class TokenException(Exception):
 from games.models import GameCategory
 
 # ---------- API---------- #
+
+# TokenObtainPairView에서 사용하는 serializer 커스터마이징
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user_data = {
+            'pk': self.user.id,
+            'email': self.user.email,
+            'nickname': self.user.nickname,
+        }
+        data.update({'user': user_data})
+        
+        return data
+
+
+# TokenObtainPairView 커스터마이징. 로그인 api view
+class CustomLoginAPIView(TokenObtainPairView):
+    serializer_class = CustomTokenObtainPairSerializer
+    
+    def post(self, request, *args, **kwargs):
+        try:
+            user = get_user_model().objects.get(email=request.data.get('email'))
+            if user.login_type != 'DEFAULT':
+                return Response(
+                    {"error_message": f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        except get_user_model().DoesNotExist:
+            return Response({
+                'message': '회원가입이 필요합니다.',
+                'email': request.data.get('email'),
+                'login_type': "DEFAULT",
+            }, status=status.HTTP_200_OK)
+        response = super().post(request, *args, **kwargs)
+        return response
+
+
 class SignUpAPIView(APIView):
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
     NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,10}$")
@@ -127,12 +163,15 @@ class SignUpAPIView(APIView):
         
         token = RefreshToken.for_user(user)
         data = {
-            'user': user,
+            'user': {
+                'pk': user.id,
+                'email': user.email,
+                'nickname': user.nickname,
+            },
             'access': str(token.access_token),
             'refresh': str(token),
         }
-        serializer = JWTSerializer(data)
-        return Response({'message': f'{login_type} 로그인 성공', **serializer.data}, status=status.HTTP_200_OK)
+        return Response({'message': f'회원가입 및 {login_type} 로그인 성공', **data}, status=status.HTTP_200_OK)
 
 
 @api_view(('GET',))
@@ -169,14 +208,19 @@ def google_login_callback(request):
 
         try:
             user = get_user_model().objects.get(email=email)
+            if user.login_type != 'GOOGLE':
+                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
             token = RefreshToken.for_user(user)
             data = {
-                'user': user,
+                'user': {
+                    'pk': user.id,
+                    'email': user.email,
+                    'nickname': user.nickname,
+                },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            serializer = JWTSerializer(data)
-            return Response({'message': '구글 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '구글 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '구글 소셜 로그인 성공, 회원가입이 필요합니다.',
@@ -230,17 +274,19 @@ def naver_login_callback(request):
 
         try:
             user = get_user_model().objects.get(email=email)
+            if user.login_type != 'NAVER':
+                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
             token = RefreshToken.for_user(user)
             data = {
-                'user': user,
+                'user': {
+                    'pk': user.id,
+                    'email': user.email,
+                    'nickname': user.nickname,
+                },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            serializer = JWTSerializer(data)
-            return Response({
-                'message': '네이버 소셜 로그인 성공, 기존 회원입니다.',
-                **serializer.data
-                }, status=status.HTTP_200_OK)
+            return Response({'message': '네이버 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '네이버 소셜 로그인 성공, 회원가입이 필요합니다.',
@@ -299,14 +345,19 @@ def kakao_login_callback(request):
         
         try:
             user = get_user_model().objects.get(email=email)
+            if user.login_type != 'KAKAO':
+                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
             token = RefreshToken.for_user(user)
             data = {
-                'user': user,
+                'user': {
+                    'pk': user.id,
+                    'email': user.email,
+                    'nickname': user.nickname,
+                },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            serializer = JWTSerializer(data)
-            return Response({'message': '카카오 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '카카오 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '카카오 소셜 로그인 성공, 회원가입이 필요합니다.',
@@ -368,14 +419,19 @@ def discord_login_callback(request):
         
         try:
             user = get_user_model().objects.get(email=email)
+            if user.login_type != 'DISCORD':
+                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
             token = RefreshToken.for_user(user)
             data = {
-                'user': user,
+                'user': {
+                    'pk': user.id,
+                    'email': user.email,
+                    'nickname': user.nickname,
+                },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            serializer = JWTSerializer(data)
-            return Response({'message': '디스코드 소셜 로그인 성공, 기존 회원입니다.', **serializer.data}, status=status.HTTP_200_OK)
+            return Response({'message': '디스코드 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
         except get_user_model().DoesNotExist:
             return Response({
                 'message': '디스코드 소셜 로그인 성공, 회원가입이 필요합니다.',
