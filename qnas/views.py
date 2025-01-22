@@ -318,6 +318,10 @@ def game_register(request, game_pk):
             pattern2 = r".+\.js\.gz$"
             pattern3 = r".+\.wasm\.gz$"
             file_extension = file_name.split('.')[-1].lower()
+            
+            # 만약 file_name이 폴더명 이라면 S3에 올리는 과정 거치지 않도록 스킵
+            if not file_extension or '/' in file_extension:
+                continue
 
             content_type = None
             content_encoding = None
