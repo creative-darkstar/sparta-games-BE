@@ -91,11 +91,19 @@ MIDDLEWARE = [
 
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
+# CORS settings
 # Allow specific origins
 CORS_ALLOWED_ORIGINS = [
     "https://sparta-games.net",
     "https://www.sparta-games.net",
+    "http://localhost:5173",  # React 앱 주소
 ]
+CORS_ALLOW_CREDENTIALS = True # 인증 정보 포함 설정
+
+# CSRF 오류 발생시 활성화
+# CSRF_TRUSTED_ORIGINS = [
+#     "http://localhost:5713",
+# ]
 
 ROOT_URLCONF = 'spartagames.urls'
 
@@ -116,18 +124,6 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'spartagames.wsgi.application'
-
-#CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # React 앱 주소
-    # "http://127.0.0.1:8000",
-]
-CORS_ALLOW_CREDENTIALS = True #인증 정보 포함 설정
-
-#CSRF 오류 발생시 활성화
-# CSRF_TRUSTED_ORIGINS = [
-#     "http://localhost:5713",
-# ]
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
