@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from datetime import timedelta
 from pathlib import Path
-
+from celery.schedules import crontab
 from . import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -46,13 +46,26 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.sites',
 
     # Third Party
+    "corsheaders",
     "django_extensions",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
     "storages",
-    "corsheaders",
+    'allauth',
+    'allauth.account',
+    'allauth.socialaccount',
+    'allauth.socialaccount.providers.google',
+    'allauth.socialaccount.providers.kakao',
+    'allauth.socialaccount.providers.naver',
+    'allauth.socialaccount.providers.discord',
+    'dj_rest_auth',
+    'dj_rest_auth.registration',
+    'rest_framework.authtoken',
+    'django_celery_results',  # Celery 태스크 결과 저장
+    'django_celery_beat',     # Celery Beat 스케줄러
 
     # Apps
     "accounts",
@@ -70,6 +83,10 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'spartagames.custom_middleware.CustomXFrameOptionsMiddleware',  # Custom 설정 추가
+    
+    # Add the account middleware:
+    "allauth.account.middleware.AccountMiddleware",
 ]
 
 X_FRAME_OPTIONS = 'SAMEORIGIN'
@@ -100,6 +117,17 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'spartagames.wsgi.application'
 
+#CORS settings
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",  # React 앱 주소
+    # "http://127.0.0.1:8000",
+]
+CORS_ALLOW_CREDENTIALS = True #인증 정보 포함 설정
+
+#CSRF 오류 발생시 활성화
+# CSRF_TRUSTED_ORIGINS = [
+#     "http://localhost:5713",
+# ]
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
@@ -119,6 +147,39 @@ DATABASES = {
         'USER': config.DATABASES["user"],
         'PASSWORD': config.DATABASES["password"],
     }
+}
+
+# Celery 브로커로 Django 데이터베이스 사용
+CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
+CELERY_RESULT_BACKEND = 'django-db'
+
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+
+# Celery Beat 설정 (스케줄링)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
+
+CELERY_BEAT_SCHEDULE = {
+    'assign-chips-every-day': {
+        'task': 'games.tasks.assign_chips_to_top_games',
+        'schedule': timedelta(minutes=1),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
+    },
+    'cleanup_new_game_chip':{
+        'task': 'games.tasks.cleanup_new_game_chip',
+        'schedule': timedelta(minutes=10),
+    },
+    'assign-bookmark-top-chips-daily': {
+        'task': 'games.tasks.assign_bookmark_top_chips',
+        'schedule': timedelta(minutes=3),
+    },
+    'assign-long-play-chips-daily': {
+        'task': 'games.tasks.assign_long_play_chips',
+        'schedule': timedelta(minutes=4),
+    },
+    'assign-review-top-chips-daily': {
+        'task': 'games.tasks.assign_review_top_chips',
+        'schedule': timedelta(minutes=5),
+    },
 }
 
 # Auth User Model - Custom
@@ -142,12 +203,36 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+AUTHENTICATION_BACKENDS = [
+    # Needed to login by username in Django admin, regardless of `allauth`
+    'django.contrib.auth.backends.ModelBackend',
+
+    # `allauth` specific authentication methods, such as login by email
+    'allauth.account.auth_backends.AuthenticationBackend',
+]
+
+# Provider specific settings
+SOCIALACCOUNT_PROVIDERS = {
+    'google': {
+        'SCOPE': [
+            'profile',
+            'email',
+        ],
+        'AUTH_PARAMS': {
+            'access_type': 'online',
+        },
+        'OAUTH_PKCE_ENABLED': True,
+    }
+}
+
+SITE_ID = 2
+
 # DRF Auth setting - default: JWT
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'DEFAULT_PAGINATION_CLASS': 'spartagames.pagination.CustomPagination',
     'PAGE_SIZE': 20,
 }
 
@@ -202,3 +287,8 @@ DEFAULT_FILE_STORAGE = "spartagames.custom_storages.MediaStorage"
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None  # username 필드를 사용하지 않음
+ACCOUNT_EMAIL_REQUIRED = True  # 이메일을 필수로 요구
+ACCOUNT_USERNAME_REQUIRED = False  # username 필드를 사용하지 않음
+ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용

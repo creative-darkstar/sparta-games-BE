@@ -5,8 +5,12 @@ from django.db import models
 from django.utils import timezone
 
 
-class Tag(models.Model):
-    name = models.CharField(max_length=20, unique=True)
+class GameCategory(models.Model):
+    name = models.CharField(max_length=50, unique=True)
+
+
+class Chip(models.Model):
+    name = models.CharField(max_length=50, unique=True)
 
 
 class Game(models.Model):
@@ -28,37 +32,109 @@ class Game(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="games"
     )
     content = models.TextField()
-    like = models.ManyToManyField(
-        settings.AUTH_USER_MODEL, related_name="games_like"
-    )
-    view_cnt = models.IntegerField(default=0)
     gamefile = models.FileField(
         upload_to=upload_to_func
     )
     gamepath = models.CharField(blank=True, null=True, max_length=511)
     register_state = models.IntegerField(default=0)
-    tag = models.ManyToManyField(
-        Tag, related_name="games",
-        null=True,
+    category = models.ManyToManyField(
+        GameCategory, related_name="games"
+    )
+    chip = models.ManyToManyField(
+        Chip, related_name="games"
     )
     is_visible = models.BooleanField(default=True)
+    base_control = models.TextField()
+    release_note = models.TextField()
+    star = models.FloatField()
+    review_cnt = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
 
-class Comment(models.Model):
-    content = models.TextField()
-    is_visible = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+class Like(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="like_games"
+    )
     game = models.ForeignKey(
-        Game, on_delete=models.CASCADE, related_name="comments"
+        Game, on_delete=models.CASCADE, related_name="likes"
     )
-    root = models.ForeignKey(
-        "self", null=True, on_delete=models.CASCADE, related_name="reply")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class View(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="view_games"
+    )
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="views"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class PlayLog(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="playlog_of_games"
+    )
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="playlog"
+    )
+    start_at = models.DateTimeField(null=True)
+    end_at = models.DateTimeField(null=True)
+    playtime = models.IntegerField(null=True)
+
+
+class TotalPlayTime(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="totalplaytime_of_games"
+    )
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="totalplaytime"
+    )
+    latest_at = models.DateTimeField(null=True)
+    totaltime = models.IntegerField(default=0)
+
+
+# 기존 Comment 테이블
+# class Comment(models.Model):
+#     content = models.TextField()
+#     is_visible = models.BooleanField(default=True)
+#     created_at = models.DateTimeField(auto_now_add=True)
+#     updated_at = models.DateTimeField(auto_now=True)
+#     game = models.ForeignKey(
+#         Game, on_delete=models.CASCADE, related_name="comments"
+#     )
+#     root = models.ForeignKey(
+#         "self", null=True, on_delete=models.CASCADE, related_name="reply")
+#     author = models.ForeignKey(
+#         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments"
+#     )
+    
+
+# Review로 바꿀 것
+class Review(models.Model):
+    game = models.ForeignKey(
+        Game, on_delete=models.CASCADE, related_name="reviews"
+    )
     author = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="comments"
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews"
     )
+    content = models.TextField()
+    star = models.IntegerField(null=True)
+    difficulty = models.IntegerField(null=True)
+    is_visible = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class ReviewsLike(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="review_likes"
+    )
+    review = models.ForeignKey(
+        Review, on_delete=models.CASCADE, related_name="reviews"
+    )
+    is_like = models.IntegerField(default=0)
 
 
 class Screenshot(models.Model):
@@ -72,11 +148,11 @@ class Screenshot(models.Model):
     )
 
 
-class Star(models.Model):
-    star = models.IntegerField(null=True)
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stars"
-    )
-    game = models.ForeignKey(
-        Game, on_delete=models.CASCADE, related_name="stars"
-    )
+# class Star(models.Model):
+#     star = models.IntegerField(null=True)
+#     user = models.ForeignKey(
+#         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="stars"
+#     )
+#     game = models.ForeignKey(
+#         Game, on_delete=models.CASCADE, related_name="stars"
+#     )
