@@ -499,6 +499,8 @@ class ReviewAPIView(APIView):
             my_review = reviews.filter(author=request.user).first()
             if my_review:
                 reviews = reviews.exclude(pk=my_review.pk)  # 내 리뷰 제외
+            else:
+                my_review={}
 
         # 정렬 조건 적용
         if order == 'likes':
@@ -512,15 +514,35 @@ class ReviewAPIView(APIView):
         else:
             reviews = reviews.order_by('-created_at')  # 최신순
 
+        empty_review_placeholder = {
+            "id": None,
+            "author_name": "",
+            "src": "",
+            "like_count": 0,
+            "dislike_count": 0,
+            "user_is_like": 0,
+            "content": "",
+            "star": None,
+            "difficulty": None,
+            "is_visible": True,
+            "created_at": None,
+            "updated_at": None,
+            "author_id": None,
+            "game_id": game_pk
+        }
+
         # `my_review`를 포함한 쿼리셋 생성
         if my_review:
             all_reviews = [my_review] + list(reviews)
         else:
             all_reviews = list(reviews)
-
+        all_reviews.insert(0, empty_review_placeholder)
+        
         # 페이지네이션 처리
         paginator = ReviewPagination()
         paginated_reviews = paginator.paginate_queryset(all_reviews, request, self)
+        if paginator.page.number == 1:
+            paginated_reviews.pop(0)
 
         if paginated_reviews is None:
             return Response({"message": "리뷰가 없습니다."}, status=404)
@@ -532,10 +554,17 @@ class ReviewAPIView(APIView):
         response_data=paginator.get_paginated_response(serializer.data).data
         # 1페이지일 때만 `my_review` 추가
         # 1페이지일 경우 my_review를 처리
-        if paginator.page.number == 1 and my_review:
+        if paginator.page.number == 1:
             all_reviews = response_data["results"]["all_reviews"]
-            response_data["results"]["my_review"] = all_reviews.pop(0)
-            all_reviews.insert(0,{})
+            if request.user.is_authenticated:
+                if my_review: #로그인, 내 리뷰 존재
+                    response_data["results"]["my_review"] = all_reviews.pop(0)
+                    all_reviews.insert(0,{})
+                else: #로그인, 내 리뷰 존재X
+                    response_data["results"]["my_review"]={}
+                    all_reviews.insert(0,{})
+            else: #로그인X
+                all_reviews.insert(0,{})
 
         return Response(response_data) 
 

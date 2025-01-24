@@ -20,7 +20,7 @@ class ReviewPagination(PageNumberPagination):
         전체 리뷰 개수를 정확히 반환.
         """
         return Response({
-            "count": self.page.paginator.count,
+            "count": self.page.paginator.count-1,
             "next": self.get_next_link(),
             "previous": self.get_previous_link(),
             "results": {
