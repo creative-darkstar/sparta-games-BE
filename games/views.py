@@ -561,7 +561,6 @@ class ReviewAPIView(APIView):
                     response_data["results"]["my_review"] = all_reviews.pop(0)
                     all_reviews.insert(0,{})
                 else: #로그인, 내 리뷰 존재X
-                    response_data["results"]["my_review"]={}
                     all_reviews.insert(0,{})
             else: #로그인X
                 all_reviews.insert(0,{})
