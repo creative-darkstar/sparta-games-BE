@@ -7,10 +7,14 @@ class GameListSerializer(serializers.ModelSerializer):
     chip_names= serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     category_name = serializers.SerializerMethodField()
+    star = serializers.SerializerMethodField()
     class Meta:
         model = Game
         fields = ("pk", "title", "thumbnail",
                   "star", "maker_name","content","chip_names","is_liked","category_name")
+    
+    def get_star(self, obj):
+        return round(obj.star, 2) if obj.star is not None else 0
     
     def get_chip_names(self, obj):
         #칩 우선순위 리스트
@@ -51,11 +55,15 @@ class GameDetailSerializer(serializers.ModelSerializer):
     maker_name = serializers.CharField(source='maker.nickname')
     is_liked = serializers.SerializerMethodField()
     chip_names= serializers.SerializerMethodField()
+    star = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
         fields = "__all__"
         read_only_fields = ('maker',)
+    
+    def get_star(self, obj):
+        return round(obj.star, 2) if obj.star is not None else 0
 
     def get_is_liked(self, obj):
         user = self.context.get('user')
