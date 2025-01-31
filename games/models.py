@@ -22,11 +22,7 @@ class Game(models.Model):
         return "".join(["zips/", time_data, '_', file_name, extension,])
 
     title = models.CharField(max_length=100)
-    thumbnail = models.ImageField(
-        upload_to="images/thumbnail/",
-        blank=True,
-        null=True,
-    )
+    thumbnail = models.ImageField(upload_to="images/thumbnail/")
     youtube_url = models.URLField(blank=True, null=True)
     maker = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="games"
@@ -44,8 +40,6 @@ class Game(models.Model):
         Chip, related_name="games"
     )
     is_visible = models.BooleanField(default=True)
-    base_control = models.TextField()
-    release_note = models.TextField()
     star = models.FloatField()
     review_cnt = models.IntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
