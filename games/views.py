@@ -40,7 +40,7 @@ from django.utils import timezone
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty
+from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file
 
 class GameListAPIView(APIView):
     """
@@ -150,7 +150,7 @@ class GameListAPIView(APIView):
 
     def post(self, request):
         # 필수 항목 확인
-        required_fields = ["title", "category", "content", "gamefile"]
+        required_fields = ["title", "category", "content", "gamefile","thumbnail"]
         missing_fields = [field for field in required_fields if not request.data.get(field)]
 
         # 누락된 필수 항목이 있을 경우 에러 메시지 반환
@@ -159,42 +159,49 @@ class GameListAPIView(APIView):
                 {"error": f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        # 썸네일 검증
+        thumbnail = request.FILES.get("thumbnail")
+        if thumbnail:
+            is_valid, error_msg = validate_image(thumbnail)
+            if not is_valid:
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        category_data = request.data.get('category')
-        invalid_categories = []
-        valid_categories = []
+        # 스크린샷 검증
+        screenshots = request.FILES.getlist("screenshots")
+        for screenshot in screenshots:
+            is_valid, error_msg = validate_image(screenshot)
+            if not is_valid:
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        if category_data:
-            for item in category_data.split(','):
-                try:
-                    category = GameCategory.objects.get(name=item)
-                    valid_categories.append(category)  # 유효한 카테고리만 추가
-                except GameCategory.DoesNotExist:
-                    invalid_categories.append(item)
+        # ZIP 파일 검증
+        gamefile = request.FILES.get("gamefile")
+        is_valid, error_msg = validate_zip_file(gamefile)
+        if not is_valid:
+            return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 잘못된 카테고리가 있는 경우 오류 메시지 반환
-        if invalid_categories:
-            return Response(
-                {"message": f"다음 카테고리는 존재하지 않습니다: {', '.join(invalid_categories)}"},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        # 카테고리 이름 가져오기
+        category_name = request.data.get('category')
+        if not category_name:
+            return Response({"error": "카테고리는 필수입니다."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            category = GameCategory.objects.get(name=category_name)
+        except GameCategory.DoesNotExist:
+            return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Game model에 우선 저장
         game = Game.objects.create(
             title=request.data.get('title'),
-            thumbnail=request.FILES.get('thumbnail'),
+            thumbnail=thumbnail,
             youtube_url=request.data.get('youtube_url'),
             maker=request.user,
             content=request.data.get('content'),
-            gamefile=request.FILES.get('gamefile'),
-            base_control=request.data.get('base_control'),
-            release_note=request.data.get('release_note'),
+            gamefile=gamefile,
             star=0,
             review_cnt=0,
         )
 
-        for category in valid_categories:
-            game.category.add(category)
+        # 카테고리 하나만 설정
+        game.category.set([category])
 
         new_game_chip, created = Chip.objects.get_or_create(name="New Game")
         game.chip.add(new_game_chip)
@@ -204,13 +211,8 @@ class GameListAPIView(APIView):
         game.chip.add(normal_chip)
 
         # 이후 Screenshot model에 저장
-        screenshots = list()
-        for item in request.FILES.getlist("screenshots"):
-            screenshot = Screenshot.objects.create(
-                src=item,
-                game=game
-            )
-            screenshots.append(screenshot.src.url)
+        for item in screenshots:
+            scrfeenshot=Screenshot.objects.create(src=item, game=game)
 
         # 게임 등록 로그에 데이터 추가
         game.logs_game.create(
@@ -357,61 +359,90 @@ class GameDetailAPIView(APIView):
     """
 
     def put(self, request, game_pk):
+        # 변경 사항 추적
+        changes = []
+
         game = self.get_object(game_pk)
 
-        # 작성한 유저이거나 관리자일 경우 동작함
-        if game.maker == request.user or request.user.is_staff == True:
-            if request.FILES.get("gamefile"):  # 게임파일을 교체할 경우 검수페이지로 이동
-                game.register_state = 0
-                game.gamefile = request.FILES.get("gamefile")
-            game.title = request.data.get("title", game.title)
-            game.thumbnail = request.FILES.get("thumbnail", '')
-            game.youtube_url = request.data.get(
-                "youtube_url", game.youtube_url)
-            game.content = request.data.get("content", game.content)
-            game.base_control = request.data.get(
-                'base_control', game.base_control),
-            game.release_note = request.data.get(
-                'release_note', game.release_note),
-            game.save()
+        # 작성한 유저이거나 관리자일 경우만 허용
+        if game.maker != request.user and not request.user.is_staff:
+            return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
-            category_data = request.data.get('category')
-            if category_data is not None:  # 태그가 바뀔 경우 기존 태그를 초기화, 신규 태그로 교체
-                game.category.clear()
-                categories = [GameCategory.objects.get_or_create(name=item.strip())[
-                    0] for item in category_data.split(',') if item.strip()]
-                game.category.set(categories)
+        # 게임 파일 검증 및 변경 처리
+        gamefile = request.FILES.get("gamefile")
+        if gamefile:
+            is_valid, error_msg = validate_zip_file(gamefile)
+            if not is_valid:
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+            game.register_state = 0
+            game.gamefile = gamefile
+            changes.append("gamefile")
 
-            # 기존 데이터 삭제
-            pre_screenshots_data = Screenshot.objects.filter(game=game)
-            pre_screenshots_data.delete()
+        # 썸네일 검증 및 변경 처리
+        thumbnail = request.FILES.get("thumbnail")
+        if thumbnail:
+            is_valid, error_msg = validate_image(thumbnail)
+            if not is_valid:
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+            if thumbnail != game.thumbnail:
+                game.thumbnail = thumbnail
+                changes.append("thumbnail")
 
-            # 받아온 스크린샷으로 교체
-            if request.data.get('screenshots'):
-                for item in request.FILES.getlist("screenshots"):
-                    game.screenshots.create(src=item)
-            
-            # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
-            if game.register_state == 0:
-                game.logs_game.create(
-                    recoder = request.user,
-                    maker = request.user,
-                    game = game,
-                    content = "수정 후 검수요청",
-                )
-            # 그 외의 항목이 수정됐을 경우 게임 등록 로그에 데이터 추가
-            # 추후 작업 예정
-            # else:
-            #     game.logs_game.create(
-            #         recoder = request.user,
-            #         maker = request.user,
-            #         game = game,
-            #         content = "수정",
-            #     )
-            
-            return Response({"messege": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
-        else:
-            return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+        # 필드 업데이트 (값이 변경되었는지 확인)
+        title = request.data.get("title", game.title)
+        if title != game.title:
+            game.title = title
+            changes.append("title")
+
+        youtube_url = request.data.get("youtube_url", game.youtube_url)
+        if youtube_url != game.youtube_url:
+            game.youtube_url = youtube_url
+            changes.append("youtube_url")
+
+        content = request.data.get("content", game.content)
+        if content != game.content:
+            game.content = content
+            changes.append("content")
+
+        game.save()
+
+        # 카테고리 변경 처리 (1개만 허용)
+        category_name = request.data.get("category")
+        if category_name:
+            try:
+                category = GameCategory.objects.get(name=category_name)
+                if not game.category.filter(pk=category.pk).exists():  # 기존과 다를 경우 변경
+                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
+                    changes.append("category")
+            except GameCategory.DoesNotExist:
+                return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 기존 스크린샷 삭제 후 새 스크린샷 등록
+        screenshots = request.FILES.getlist("screenshots")
+        if screenshots:
+            for screenshot in screenshots:
+                is_valid, error_msg = validate_image(screenshot)
+                if not is_valid:
+                    return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+            Screenshot.objects.filter(game=game).delete()
+            for item in screenshots:
+                Screenshot.objects.create(src=item, game=game)
+            changes.append("screenshots")
+
+        # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
+        if changes:
+            if "gamefile" in changes:
+                log_content = f"수정 후 검수요청 : {', '.join(changes)}"
+            else:
+                log_content = f"수정 : {', '.join(changes)}"
+            game.logs_game.create(
+                recoder=request.user,
+                maker=request.user,
+                game=game,
+                content=log_content,
+            )
+
+        return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """
     게임 삭제
@@ -561,7 +592,6 @@ class ReviewAPIView(APIView):
                     response_data["results"]["my_review"] = all_reviews.pop(0)
                     all_reviews.insert(0,{})
                 else: #로그인, 내 리뷰 존재X
-                    response_data["results"]["my_review"]={}
                     all_reviews.insert(0,{})
             else: #로그인X
                 all_reviews.insert(0,{})
