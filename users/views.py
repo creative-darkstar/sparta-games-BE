@@ -293,8 +293,8 @@ def like_games(request, user_pk):
     like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
         return Response(
-            {"message": f"{request.user}가 즐겨찾기한 게임이 없습니다."},
-            status=status.HTTP_404_NOT_FOUND  # Not Found
+            {},
+            status=status.HTTP_204_NO_CONTENT  # Not Found
         )
 
     # 페이지네이션 적용
