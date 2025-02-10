@@ -112,7 +112,7 @@ class ProfileAPIView(APIView):
         # 닉네임
         user.nickname = nickname
         # 프로필 이미지
-        user.image = self.request.data.get('image', user.image)
+        user.image = self.request.FILES.get("image", user.image)
         # 유저 / 메이커 구분
         user.is_maker = self.request.data.get('is_maker', user.is_maker)
         # 자기소개
