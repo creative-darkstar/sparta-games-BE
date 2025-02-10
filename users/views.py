@@ -112,7 +112,7 @@ class ProfileAPIView(APIView):
         # 닉네임
         user.nickname = nickname
         # 프로필 이미지
-        user.image = self.request.data.get('image', user.image)
+        user.image = self.request.FILES.get("image", user.image)
         # 유저 / 메이커 구분
         user.is_maker = self.request.data.get('is_maker', user.is_maker)
         # 자기소개
@@ -293,8 +293,8 @@ def like_games(request, user_pk):
     like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
         return Response(
-            {"message": f"{request.user}가 즐겨찾기한 게임이 없습니다."},
-            status=status.HTTP_404_NOT_FOUND  # Not Found
+            {},
+            status=status.HTTP_204_NO_CONTENT  # Not Found
         )
 
     # 페이지네이션 적용
