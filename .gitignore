@@ -16,6 +16,8 @@ config.py
 !**/media/images/profile/.gitkeep
 !**/media/games/.gitkeep
 !**/media/zips/.gitkeep
+**/client_secret.json
+**/token.pickle
 
 ### Django ###
 *.log

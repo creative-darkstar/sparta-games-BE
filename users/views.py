@@ -3,8 +3,9 @@ import re
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404, render
 from rest_framework import status
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -12,6 +13,7 @@ from spartagames.pagination import CustomPagination
 
 from .serializers import MyGameListSerializer
 
+from accounts.models import EmailVerification
 from games.models import (
     Game,
     GameCategory,
@@ -232,6 +234,76 @@ def change_password(request, user_pk):
     # 유저 비밀번호가 일치한다면
     user.set_password(new_password)
     user.save()
+    return Response(
+        {
+            "message": f"비밀번호 수정 완료 (회원 아이디: {user.nickname})"
+        },
+        status=status.HTTP_202_ACCEPTED
+    )
+
+
+@api_view(["POST"])
+def password_verify_code(request):
+    email = request.data.get('email')
+    code = request.data.get('code')
+
+    try:
+        verification = EmailVerification.objects.get(email=email)
+    except EmailVerification.DoesNotExist:
+        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.is_expired():
+        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.verification_code == code:
+        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+    else:
+        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PUT"])
+def reset_password(request):
+    # 유효성 검사 정규식 패턴
+    PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
+    
+    email = request.data.get("email")
+    code = request.data.get('code')
+    new_password = request.data.get("new_password")
+    new_password_check = request.data.get("new_password_check")
+    
+    user = get_user_model().objects.get(email=email)
+    
+    if user.login_type != "DEFAULT":
+        return Response({'error': '소셜 로그인 사용자는 비밀번호를 변경할 수 없습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        verification = EmailVerification.objects.get(email=email)
+    except EmailVerification.DoesNotExist:
+        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.is_expired():
+        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.verification_code != code:
+        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # new password 유효성 검사
+    if not PASSWORD_PATTERN.match(new_password):
+        return Response(
+            {"error_message": "올바른 password와 password_check를 입력해주세요."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    elif not new_password == new_password_check:
+        return Response(
+            {"error_message": "동일한 password와 password_check를 입력해주세요."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    user.set_password(new_password)
+    user.save()
+    # 기존 이메일 인증 데이터 삭제
+    EmailVerification.objects.filter(email=email).delete()
+    
     return Response(
         {
             "message": f"비밀번호 수정 완료 (회원 아이디: {user.nickname})"
