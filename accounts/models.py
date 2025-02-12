@@ -1,6 +1,9 @@
+from datetime import timedelta
+
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
 from django.utils import timezone
+
 from games.models import GameCategory
 
 
@@ -78,6 +81,16 @@ class Follow(models.Model):
     follower = models.ForeignKey(User, on_delete=models.CASCADE, related_name="followings")
     following = models.ForeignKey(User, on_delete=models.CASCADE, related_name="followers")
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+# 이메일 및 인증 코드를 저장
+class EmailVerification(models.Model):
+    email = models.EmailField(unique=True)
+    verification_code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def is_expired(self):
+        return timezone.now() > self.created_at + timedelta(minutes=5)
 
 
 class BotCnt(models.Model):
