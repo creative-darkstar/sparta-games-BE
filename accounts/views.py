@@ -1,5 +1,20 @@
-from django.shortcuts import render
+import os
+import pickle
+import base64
+import random
+import re
+import requests
+import urllib.parse
 
+from django.contrib import messages
+from django.contrib.auth import get_user_model
+
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from email.mime.text import MIMEText
+
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, renderer_classes
@@ -9,14 +24,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
-from django.contrib import messages
-from django.contrib.auth import get_user_model
-from django.contrib.auth.hashers import PBKDF2PasswordHasher
-import re
-import requests
-import urllib.parse
-from rest_framework import status
 from spartagames import config
+from .models import EmailVerification
 
 
 class AlertException(Exception):
@@ -84,6 +93,13 @@ class SignUpAPIView(APIView):
                 {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        # 전체 게임 카테고리 가져오기
+        game_categories = GameCategory.objects.filter(name__in=game_category)
+        if not game_categories.exists():
+            return Response(
+                {"error_message": "올바른 game category를 입력해주세요."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
@@ -137,14 +153,6 @@ class SignUpAPIView(APIView):
                 user_tech = user_tech,
                 is_maker = is_maker,
                 login_type = login_type,
-            )
-        
-        # 카테고리 가져오기
-        game_categories = GameCategory.objects.filter(name__in=game_category)
-        if not game_categories.exists():
-            return Response(
-                {"error_message": "올바른 game category를 입력해주세요."},
-                status=status.HTTP_400_BAD_REQUEST
             )
         
         # 관심 카테고리 등록
@@ -450,6 +458,88 @@ def discord_login_callback(request):
         print(e)
         # 개발 단계에서 확인
         return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# 이메일 인증 관련 상수 값
+SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 현재 파일의 디렉토리를 기준으로 절대 경로 설정
+CLIENT_SECRET_FILE = os.path.join(BASE_DIR, 'client_secret.json')
+
+def get_credentials():
+    creds = None
+    if os.path.exists('token.pickle'):
+        with open('token.pickle', 'rb') as token:
+            creds = pickle.load(token)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRET_FILE, SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.pickle', 'wb') as token:
+            pickle.dump(creds, token)
+    return creds
+
+
+@api_view(('POST',))
+@renderer_classes((JSONRenderer,))
+def email_verification(request):
+    email = request.data.get("email")
+    is_new = request.data.get("is_new", '')
+    
+    if not email:
+        return Response({'error': "이메일을 입력하지 않았습니다."}, status=status.HTTP_400_BAD_REQUEST)
+    if is_new:
+        if get_user_model().objects.filter(email=email).exists():
+            return Response({'error': '이미 가입한 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # 기존 이메일 인증 데이터 삭제
+    EmailVerification.objects.filter(email=email).delete()
+    
+    creds = get_credentials()
+    service = build('gmail', 'v1', credentials=creds)
+
+    code = ''.join(random.choices('0123456789', k=6))
+    message = MIMEText(f"이메일 인증 코드는  {code}  입니다.")
+    message['from'] = 'sparta.games.master@gmail.com'
+    message['to'] = email
+    message['subject'] = "Sparta Games 메일 주소 인증 번호"
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    message = {
+        'raw': raw
+    }
+
+    try:
+        message = (service.users().messages().send(userId='me', body=message).execute())
+    except Exception as error:
+        print(f'An error occurred: {error}')
+        return Response({'message': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    EmailVerification.objects.create(email=email, verification_code=code)
+    return Response({'message': f"인증번호를 발송했습니다. (이메일 message id: {message['id']})"}, status=status.HTTP_200_OK)
+
+
+@api_view(('POST',))
+@renderer_classes((JSONRenderer,))
+def verify_code(request):
+    email = request.data.get('email')
+    code = request.data.get('code')
+
+    try:
+        verification = EmailVerification.objects.get(email=email)
+    except EmailVerification.DoesNotExist:
+        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.is_expired():
+        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if verification.verification_code == code:
+        # 기존 이메일 인증 데이터 삭제
+        EmailVerification.objects.filter(email=email).delete()
+        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+    else:
+        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # # 회원가입 또는 로그인을 처리하는 함수

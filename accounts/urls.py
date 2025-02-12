@@ -23,6 +23,9 @@ urlpatterns = [
     path("api/naver/callback/", views.naver_login_callback, name='naver_callback'),
     path("api/kakao/callback/", views.kakao_login_callback, name='kakao_callback'),
     path("api/discord/callback/", views.discord_login_callback, name='discord_callback'),
+    
+    path("api/email/", views.email_verification, name="email_verification"),
+    path("api/email-verify/", views.verify_code, name="verify_code"),
 
     # ---------- Web---------- #
     #path('login/', views.login_page, name='login_page'),
