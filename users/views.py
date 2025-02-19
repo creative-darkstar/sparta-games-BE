@@ -27,7 +27,8 @@ class ProfileAPIView(APIView):
 
     # 유효성 검사 정규식 패턴
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
-    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,10}$")
+    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
+    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
 
     def get(self, request, user_pk):
         user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
@@ -74,7 +75,7 @@ class ProfileAPIView(APIView):
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
         elif not self.NICKNAME_PATTERN.match(nickname):
             return Response(
-                {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 영숫자입니다."},
+                {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."},
                 status=status.HTTP_400_BAD_REQUEST
             )
         elif get_user_model().objects.filter(nickname=nickname).exists():
@@ -175,14 +176,15 @@ def user_tech_list(request):
 @api_view(["GET"])
 def check_nickname(request):
     # 유효성 검사 정규식 패턴
-    NICKNAME_PATTERN = re.compile(r"^[a-zA-Z0-9]{4,10}$")
+    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
+    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
 
     nickname = request.data.get('nickname', None)
         
     # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
     if not NICKNAME_PATTERN.match(nickname):
         return Response(
-            {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 영숫자입니다."},
+            {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."},
             status=status.HTTP_400_BAD_REQUEST
         )
     elif get_user_model().objects.filter(nickname=nickname).exists():
