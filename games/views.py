@@ -567,12 +567,12 @@ class ReviewAPIView(APIView):
             all_reviews = [my_review] + list(reviews)
         else:
             all_reviews = list(reviews)
-        all_reviews.insert(0, empty_review_placeholder)
+            all_reviews.insert(0, empty_review_placeholder)
         
         # 페이지네이션 처리
         paginator = ReviewPagination()
         paginated_reviews = paginator.paginate_queryset(all_reviews, request, self)
-        if paginator.page.number == 1:
+        if paginator.page.number == 1 and not my_review:
             paginated_reviews.pop(0)
 
         if paginated_reviews is None:
@@ -590,7 +590,7 @@ class ReviewAPIView(APIView):
             if request.user.is_authenticated:
                 if my_review: #로그인, 내 리뷰 존재
                     response_data["results"]["my_review"] = all_reviews.pop(0)
-                    all_reviews.insert(0,{})
+                    response_data["count"]+=1
                 else: #로그인, 내 리뷰 존재X
                     all_reviews.insert(0,{})
             else: #로그인X
