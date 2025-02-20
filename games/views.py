@@ -70,12 +70,12 @@ class GameListAPIView(APIView):
             return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
         
-        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0])[:limit]
-        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1])[:limit]
-        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2])[:limit]
-        favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1)[:limit]
+        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0]).order_by('-created_at')[:limit]
+        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1]).order_by('-created_at')[:limit]
+        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2]).order_by('-created_at')[:limit]
+        favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1).order_by('-created_at')[:limit]
         if new_game_chip:
-            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1)[:limit]
+            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at')[:limit]
         else:
             recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
