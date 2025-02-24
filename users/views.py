@@ -423,13 +423,11 @@ def gamepacks(request, user_pk):
     liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
     # 2. 관심 있는 카테고리의 게임 가져오기
     interested_categories = user.game_category.all()
-    print(interested_categories)
     category_games = Game.objects.filter(
         category__in=interested_categories,
         is_visible=True,
         register_state=1
     ).exclude(likes__user=user).distinct().order_by('-star','-created_at')
-    print(category_games)
     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
     liked_games_count = liked_games.count()
     if liked_games_count < 4:
@@ -443,7 +441,9 @@ def gamepacks(request, user_pk):
         serializer = GameListSerializer(combined_games, many=True, context={'user': user})
         return Response(serializer.data, status=status.HTTP_200_OK)
     else:
-        return Response({"message": "게임팩 조건에 맞는 게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        latest_games=list(Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at')[:4])
+        serializer = GameListSerializer(latest_games, many=True, context={'user': user})
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])

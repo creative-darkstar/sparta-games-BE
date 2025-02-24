@@ -4,20 +4,18 @@ from .models import Chip
 from PIL import Image
 import zipfile
 
-def validate_image(image, max_width=1000, max_height=800, max_size=5 * 1024 * 1024):
+def validate_image(image):
     """
-    이미지 파일의 크기 및 해상도를 검증하는 함수
+    이미지 파일 형식만 검증하는 함수 (확장자 무관)
     """
     try:
         img = Image.open(image)
-        width, height = img.size
+        img.verify()  # 파일 손상 여부 확인
 
-        if width > max_width or height > max_height:
-            return False, f"이미지 크기는 최대 {max_width}x{max_height}px 이어야 합니다. 현재: {width}x{height}px"
-        
-        if image.size > max_size:
-            return False, f"이미지 파일 크기는 최대 {max_size / (1024 * 1024)}MB 이어야 합니다."
-        
+        # 확실한 검증을 위해 다시 열어서 실제로 로드해보기
+        img = Image.open(image)
+        img.load()  # 로드 과정에서 오류 발생 시 비정상적인 이미지
+
         return True, None
     except Exception:
         return False, "유효한 이미지 파일이 아닙니다."
