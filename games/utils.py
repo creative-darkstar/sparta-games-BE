@@ -20,7 +20,7 @@ def validate_image(image):
     except Exception:
         return False, "유효한 이미지 파일이 아닙니다."
 
-def validate_zip_file(zip_file, max_size=200 * 1024 * 1024):
+def validate_zip_file(zip_file, max_size=500 * 1024 * 1024):
     """
     ZIP 파일의 크기 및 형식을 검증하는 함수
     """
