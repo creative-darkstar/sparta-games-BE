@@ -22,12 +22,15 @@ def assign_chips_to_top_games():
         
         # 좋아요 수가 가장 많은 상위 4개 게임 가져오기
         top_games = Game.objects.annotate(
-            like_count=Count('likes')
+            score=(
+                Count('likes') * 0.4 +
+                Count('reviews', filter=Q(reviews__created_at__gte=timezone.now() - timedelta(days=1))) * 0.3 +
+                Count('views', filter=Q(views__created_at__gte=timezone.now() - timedelta(days=1))) * 0.3
+            )
         ).filter(
             is_visible=True,
             register_state=1,
-            like_count__gte=1
-        ).order_by('-like_count', '-created_at')[:4]
+        ).order_by('-score', '-created_at')[:4]
         
         # 상위 4개 게임에 'Daily Top' 칩 할당
         for game in top_games:
