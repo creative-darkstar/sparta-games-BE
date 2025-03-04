@@ -221,6 +221,12 @@ def change_password(request, user_pk):
             status=status.HTTP_400_BAD_REQUEST
         )
 
+    if check_password == new_password:
+        return Response(
+            {"message": "현재 비밀번호와 동일합니다."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
     # new password 유효성 검사
     if not PASSWORD_PATTERN.match(new_password):
         return Response(
