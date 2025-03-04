@@ -493,6 +493,9 @@ def email_verification(request):
     if is_new:
         if get_user_model().objects.filter(email=email).exists():
             return Response({'error': '이미 가입한 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        if not get_user_model().objects.filter(email=email).exists():
+            return Response({'error': '존재하지 않는 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
     
     # 기존 이메일 인증 데이터 삭제
     EmailVerification.objects.filter(email=email).delete()
