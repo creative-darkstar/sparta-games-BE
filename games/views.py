@@ -219,7 +219,7 @@ class GameListAPIView(APIView):
             recoder = request.user,
             maker = request.user,
             game = game,
-            content = "검수요청",
+            content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
         )
         
         return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
@@ -432,9 +432,9 @@ class GameDetailAPIView(APIView):
         # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
         if changes:
             if "gamefile" in changes:
-                log_content = f"수정 후 검수요청 : {', '.join(changes)}"
+                log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
             else:
-                log_content = f"수정 : {', '.join(changes)}"
+                log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
             game.logs_game.create(
                 recoder=request.user,
                 maker=request.user,
@@ -461,7 +461,7 @@ class GameDetailAPIView(APIView):
                 recoder = request.user,
                 maker = request.user,
                 game = game,
-                content = "삭제",
+                content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
             )
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:

@@ -8,6 +8,7 @@ import urllib.parse
 
 from django.contrib import messages
 from django.contrib.auth import get_user_model
+from django.shortcuts import get_object_or_404
 
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -83,8 +84,18 @@ class SignUpAPIView(APIView):
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
     def post(self, request):
-        login_type = request.data.get("login_type", "DEFAULT")
         email = request.data.get("email")
+        code = request.data.get('code')
+
+        verification = get_object_or_404(EmailVerification, email=email)
+        
+        if verification.verification_code == code:
+            # 기존 이메일 인증 데이터 삭제
+            EmailVerification.objects.filter(email=email).delete()
+        else:
+            return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        login_type = request.data.get("login_type", "DEFAULT")
         nickname = request.data.get("nickname")
         # game_category = request.data.getlist("game_category")
         game_category = request.data.get("game_category", '')
@@ -520,7 +531,10 @@ def email_verification(request):
         print(f'An error occurred: {error}')
         return Response({'message': str(error)}, status=status.HTTP_400_BAD_REQUEST)
     
+    if EmailVerification.objects.filter(email=email).exists():
+        EmailVerification.objects.filter(email=email).delete()
     EmailVerification.objects.create(email=email, verification_code=code)
+    
     return Response({'message': f"인증번호를 발송했습니다. (이메일 message id: {message['id']})"}, status=status.HTTP_200_OK)
 
 
@@ -539,8 +553,6 @@ def verify_code(request):
         return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if verification.verification_code == code:
-        # 기존 이메일 인증 데이터 삭제
-        EmailVerification.objects.filter(email=email).delete()
         return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
     else:
         return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)

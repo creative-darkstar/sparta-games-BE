@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
+from django.contrib.auth import get_user_model
 
+from spartagames.config import ADMIN_STAFF_EMAIL, ADMIN_USER_EMAIL
 from games.models import Game
 
 # Create your models here.
@@ -16,16 +18,32 @@ class QnA(models.Model):
     is_visible=models.BooleanField(default=True)
 
 
+def set_admin_staff_FK():
+    return get_user_model().objects.get(email=ADMIN_STAFF_EMAIL)
+
+
+def set_admin_user_FK():
+    return get_user_model().objects.get(email=ADMIN_USER_EMAIL)
+
+
 # 게임 등록 로그
 class GameRegisterLog(models.Model):
     recoder = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="logs_recoder"
+        settings.AUTH_USER_MODEL, on_delete=models.SET(set_admin_staff_FK), related_name="logs_recoder"
     )
     maker = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="logs_maker"
+        settings.AUTH_USER_MODEL, on_delete=models.SET(set_admin_user_FK), related_name="logs_maker"
     )
     game = models.ForeignKey(
         Game, on_delete=models.CASCADE, related_name="logs_game"
     )
     content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+# 유저 탈퇴(임시) 리스트
+class DeleteUsers(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="delete_user"
+    )
     created_at = models.DateTimeField(auto_now_add=True)

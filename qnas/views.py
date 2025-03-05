@@ -311,7 +311,7 @@ def game_register(request, game_pk):
         recoder = request.user,
         maker = row.maker,
         game = row,
-        content = "승인",
+        content = f"승인 (기록자: {request.user.email}, 제작자: {row.maker.email})",
     )
     
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
