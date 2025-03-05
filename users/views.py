@@ -202,6 +202,12 @@ def change_password(request, user_pk):
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
     user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    # 로그인 타입 확인
+    if user.login_type != "DEFAULT":
+        return Response(
+            {"error_message": "비밀번호 변경은 일반 로그인(DEFAULT) 사용자만 가능합니다."},
+            status=status.HTTP_403_FORBIDDEN
+        )
 
     check_password = request.data.get("password")
     new_password = request.data.get("new_password")
