@@ -501,14 +501,24 @@ def email_verification(request):
     
     if not email:
         return Response({'error': "이메일을 입력하지 않았습니다."}, status=status.HTTP_400_BAD_REQUEST)
-    if is_new:
-        if get_user_model().objects.filter(email=email).exists():
-            return Response({'error': '이미 가입한 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
-    else:
-        if not get_user_model().objects.filter(email=email).exists():
-            return Response({'error': '존재하지 않는 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # 기존 이메일 인증 데이터 삭제
+    # 해당 이메일의 유저 정보 가져오기=>중복 쿼리로 DB 성능 저하 가능성으로 한개로 처리
+    user = get_user_model().objects.filter(email=email).first()
+
+    # 소셜 로그인 타입 검사
+    if user and user.login_type != "DEFAULT":
+        return Response(
+            {'error': "소셜 로그인 사용자는 이메일 인증이 필요하지 않습니다."},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    # 회원가입할 때(is_new=True) -> 이미 존재하는 이메일이면 에러
+    if is_new and user:
+            return Response({'error': '이미 가입한 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+    # 비밀번호 리셋시(is_new=False) -> 존재하지 않는 이메일이면 에러
+    if not is_new and not user:
+        return Response({'error': '존재하지 않는 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    # 기존 이메일 인증 데이터 삭제=>여기서 이미 삭제 하기에 아래에는 필요가 없음(뭐가 있든 지우고 있기때문)
     EmailVerification.objects.filter(email=email).delete()
     
     creds = get_credentials()
@@ -531,8 +541,7 @@ def email_verification(request):
         print(f'An error occurred: {error}')
         return Response({'message': str(error)}, status=status.HTTP_400_BAD_REQUEST)
     
-    if EmailVerification.objects.filter(email=email).exists():
-        EmailVerification.objects.filter(email=email).delete()
+    #이메일 인증 데이터 저장
     EmailVerification.objects.create(email=email, verification_code=code)
     
     return Response({'message': f"인증번호를 발송했습니다. (이메일 message id: {message['id']})"}, status=status.HTTP_200_OK)
