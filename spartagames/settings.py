@@ -178,6 +178,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'games.tasks.assign_review_top_chips',
         'schedule': timedelta(minutes=5),
     },
+    'hard-delete-user': {
+        'task': 'qnas.tasks.hard_delete_user',
+        'schedule': timedelta(minutes=1),
+    },
 }
 
 # Auth User Model - Custom
