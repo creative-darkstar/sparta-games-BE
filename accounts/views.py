@@ -508,7 +508,7 @@ def email_verification(request):
     # 소셜 로그인 타입 검사
     if user and user.login_type != "DEFAULT":
         return Response(
-            {'error': "소셜 로그인 사용자는 이메일 인증이 필요하지 않습니다."},
+            {'error': f"해당 유저는 기존에 [{user.login_type}] 로그인 방식으로 가입했습니다."},
             status=status.HTTP_400_BAD_REQUEST
         )
     # 회원가입할 때(is_new=True) -> 이미 존재하는 이메일이면 에러
