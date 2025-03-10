@@ -88,13 +88,6 @@ class SignUpAPIView(APIView):
         code = request.data.get('code')
 
         verification = get_object_or_404(EmailVerification, email=email)
-        
-        if verification.verification_code == code:
-            # 기존 이메일 인증 데이터 삭제
-            EmailVerification.objects.filter(email=email).delete()
-        else:
-            return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
-        
         login_type = request.data.get("login_type", "DEFAULT")
         nickname = request.data.get("nickname")
         # game_category = request.data.getlist("game_category")
@@ -135,6 +128,12 @@ class SignUpAPIView(APIView):
             return Response({"error_message":"올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."}, status=status.HTTP_400_BAD_REQUEST)
         elif get_user_model().objects.filter(nickname=nickname).exists():
             return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if verification.verification_code == code:
+            # 기존 이메일 인증 데이터 삭제
+            EmailVerification.objects.filter(email=email).delete()
+        else:
+            return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # 일반 로그인일 경우 비밀번호 유효성 검증 후 유저 데이터 추가
         if login_type == "DEFAULT":
