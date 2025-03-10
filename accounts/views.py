@@ -85,9 +85,6 @@ class SignUpAPIView(APIView):
 
     def post(self, request):
         email = request.data.get("email")
-        code = request.data.get('code')
-
-        verification = get_object_or_404(EmailVerification, email=email)
         login_type = request.data.get("login_type", "DEFAULT")
         nickname = request.data.get("nickname")
         # game_category = request.data.getlist("game_category")
@@ -129,22 +126,24 @@ class SignUpAPIView(APIView):
         elif get_user_model().objects.filter(nickname=nickname).exists():
             return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
         
-        if verification.verification_code == code:
-            # 기존 이메일 인증 데이터 삭제
-            EmailVerification.objects.filter(email=email).delete()
-        else:
-            return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
         
         # 일반 로그인일 경우 비밀번호 유효성 검증 후 유저 데이터 추가
         if login_type == "DEFAULT":
             password = request.data.get("password")
             password_check = request.data.get("password_check")
+            code = request.data.get('code')
             
             # password 유효성 검사
             if not self.PASSWORD_PATTERN.match(password):
                 return Response({"error_message":"올바른 password.password_check를 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
             elif not password == password_check:
                 return Response({"error_message":"암호를 확인해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            verification = get_object_or_404(EmailVerification, email=email)
+            if verification.verification_code == code:
+                # 기존 이메일 인증 데이터 삭제
+                EmailVerification.objects.filter(email=email).delete()
+            else:
+                return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
             
             # DB에 유저 등록
             user = get_user_model().objects.create_user(
