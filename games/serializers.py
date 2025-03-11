@@ -93,6 +93,7 @@ class ReviewSerializer(serializers.ModelSerializer):
     game_id = serializers.IntegerField(source='game.id', read_only=True)
     author_name = serializers.CharField(
         source='author.nickname', read_only=True)
+    author_image = serializers.ImageField(source='author.image', read_only=True)  # 프로필 이미지 추가
     like_count = serializers.SerializerMethodField()
     dislike_count = serializers.SerializerMethodField()
     user_is_like = serializers.SerializerMethodField()
@@ -102,7 +103,7 @@ class ReviewSerializer(serializers.ModelSerializer):
         fields = [
             'id','author_name','like_count','dislike_count','user_is_like',
             'content','star','difficulty','is_visible','created_at','updated_at',
-            'author_id','game_id',
+            'author_id','game_id','author_image'
         ]
         read_only_fields = ('is_visible', 'game', 'author',)
     
