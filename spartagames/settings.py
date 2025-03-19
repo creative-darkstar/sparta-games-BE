@@ -160,27 +160,27 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
 CELERY_BEAT_SCHEDULE = {
     'assign-chips-every-day': {
         'task': 'games.tasks.assign_chips_to_top_games',
-        'schedule': timedelta(minutes=1),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
+        'schedule': crontab(hour=4, minute=0),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
     },
     'cleanup_new_game_chip':{
         'task': 'games.tasks.cleanup_new_game_chip',
-        'schedule': timedelta(minutes=10),
+        'schedule': timedelta(days=3),
     },
     'assign-bookmark-top-chips-daily': {
         'task': 'games.tasks.assign_bookmark_top_chips',
-        'schedule': timedelta(minutes=3),
+        'schedule': crontab(hour=3, minute=45),
     },
     'assign-long-play-chips-daily': {
         'task': 'games.tasks.assign_long_play_chips',
-        'schedule': timedelta(minutes=4),
+        'schedule': crontab(hour=3, minute=50),
     },
     'assign-review-top-chips-daily': {
         'task': 'games.tasks.assign_review_top_chips',
-        'schedule': timedelta(minutes=5),
+        'schedule': crontab(hour=3, minute=40),
     },
     'hard-delete-user': {
         'task': 'qnas.tasks.hard_delete_user',
-        'schedule': timedelta(minutes=1),
+        'schedule': crontab(hour=6, minute=0),
     },
 }
 
@@ -240,7 +240,7 @@ REST_FRAMEWORK = {
 
 # DRF JWT setting
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,

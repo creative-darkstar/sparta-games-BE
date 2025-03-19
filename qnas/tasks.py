@@ -13,8 +13,8 @@ from .models import DeleteUsers, GameRegisterLog
 @shared_task
 def hard_delete_user():
     """
-    매일 오전 4시에 실행
-    유예기간: 탈퇴 버튼을 누른 시점으로부터 이틀 뒤 (ex: 3월 5일에 탈퇴했다면 3월 7일 오전 4시에 삭제)
+    매일 오전 6시에 실행
+    유예기간: 탈퇴 버튼을 누른 시점으로부터 이틀 뒤 (ex: 3월 5일에 탈퇴했다면 3월 7일 오전 6시에 삭제)
     """
     try:
         rows = DeleteUsers.objects.filter(created_at__lte=timezone.now()-timedelta(days=2))
