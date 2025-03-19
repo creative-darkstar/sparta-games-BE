@@ -25,9 +25,11 @@ def hard_delete_user():
         
         for row in rows:
             user = row.user
+            
+            # 게임 이관 처리
             games = user.games.all()
             for game in games:
-                # 등록 거부 사유 로그 추가
+                # 이관 로그 추가
                 GameRegisterLog.objects.create(
                     recoder=admin_staff,
                     maker=admin_user,
@@ -37,9 +39,12 @@ def hard_delete_user():
                 game.maker = admin_user
                 game.save()
 
+            # 리뷰 이관 처리
             reviews = user.reviews.all()
-            reviews.delete()
-
+            for review in reviews:
+                review.author = admin_user
+                review.save()
+            
             user.delete()
         
         return f"유저 완전 삭제 프로세스 완료"

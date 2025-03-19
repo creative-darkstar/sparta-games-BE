@@ -1,8 +1,30 @@
 import os
+import re
 
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+
+
+def validate_text_content(value):
+    text_only = re.sub(r'<[^>]+>', '', value)  # HTML 태그 제거한 순수 텍스트
+    tag_only = re.findall(r'<[^>]+>', value)   # HTML 태그 목록 추출
+
+    text_length = len(text_only)
+    tag_length = sum(len(tag) for tag in tag_only)
+
+    # 순수 텍스트 10만 자 제한
+    if text_length > 100000:    
+        raise ValidationError('게시글이 너무 깁니다. 10만 글자 이하로 작성해주세요.')
+    
+    # HTML 포함 시 50만 자 제한
+    if len(value) > 500000:
+        raise ValidationError('게시글이 너무 깁니다.')
+
+    # 태그 비율 70% 초과 시 차단
+    if tag_length / len(value) > 0.7:
+        raise ValidationError('HTML 태그가 지나치게 많습니다.')
 
 
 class GameCategory(models.Model):
@@ -27,7 +49,7 @@ class Game(models.Model):
     maker = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="games"
     )
-    content = models.TextField()
+    content = models.TextField(validators=[validate_text_content])
     gamefile = models.FileField(
         upload_to=upload_to_func
     )
@@ -113,7 +135,7 @@ class Review(models.Model):
     author = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews"
     )
-    content = models.TextField()
+    content = models.TextField(max_length=300)
     star = models.IntegerField(null=True)
     difficulty = models.IntegerField(null=True)
     is_visible = models.BooleanField(default=True)
