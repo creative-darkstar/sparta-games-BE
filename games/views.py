@@ -606,9 +606,11 @@ class ReviewAPIView(APIView):
             return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 별점 계산
-        game.star = game.star + \
-            ((request.data.get('star')-game.star)/(game.review_cnt+1))
-        game.review_cnt = game.review_cnt+1
+        star = request.data.get('star')
+        if star not in [1, 2, 3, 4, 5]:
+            return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+        game.star = game.star + ((star - game.star) / (game.review_cnt + 1))
+        game.review_cnt = game.review_cnt + 1
         game.save()
 
         serializer = ReviewSerializer(
@@ -651,8 +653,10 @@ class ReviewDetailAPIView(APIView):
         if request.user == review.author or request.user.is_staff == True:
             game_pk = request.data.get('game_pk')
             game = get_object_or_404(Game, pk=game_pk)  # game 객체를 올바르게 설정
-            game.star = game.star + \
-                ((request.data.get('star')-request.data.get('pre_star'))/(game.review_cnt))
+            star = request.data.get('star')
+            if star not in [1, 2, 3, 4, 5]:
+                return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+            game.star = game.star + ((star - request.data.get('pre_star')) / (game.review_cnt))
             game.save()
             serializer = ReviewSerializer(
                 review, data=request.data, partial=True, context={'user': request.user})
