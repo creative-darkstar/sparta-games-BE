@@ -21,6 +21,7 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.renderers import JSONRenderer
 
+from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -68,11 +69,12 @@ class CustomLoginAPIView(TokenObtainPairView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
         except get_user_model().DoesNotExist:
+            # 2025-03-21 FE팀 요청. 상태 코드 401로 수정 (기존: 200 OK)
             return Response({
                 'message': '회원가입이 필요합니다.',
                 'email': request.data.get('email'),
                 'login_type': "DEFAULT",
-            }, status=status.HTTP_200_OK)
+            }, status=status.HTTP_401_UNAUTHORIZED)
         response = super().post(request, *args, **kwargs)
         return response
 
