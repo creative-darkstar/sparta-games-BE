@@ -116,7 +116,14 @@ class ProfileAPIView(APIView):
         # 닉네임
         user.nickname = nickname
         # 프로필 이미지
-        user.image = self.request.FILES.get("image", user.image)
+        # 2025-03-22 FE팀 요청
+        # "image" 데이터를 우선 data.get으로 확인. 확인 시 빈 값("")일 경우 이미지 삭제
+        # 변경할 이미지 값이 있거나 "image" 데이터를 포함하지 않았을 경우 기존대로 동작
+        image = self.request.data.get("image")
+        if image == "":
+            user.image = None
+        else:
+            user.image = self.request.FILES.get("image", user.image)
         # 유저 / 메이커 구분
         user.is_maker = self.request.data.get('is_maker', user.is_maker)
         # 자기소개
