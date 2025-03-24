@@ -230,6 +230,8 @@ def google_login_callback(request):
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'GOOGLE':
                 return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.is_active:
+                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
@@ -296,6 +298,8 @@ def naver_login_callback(request):
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'NAVER':
                 return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.is_active:
+                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
@@ -367,6 +371,8 @@ def kakao_login_callback(request):
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'KAKAO':
                 return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.is_active:
+                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
@@ -441,6 +447,8 @@ def discord_login_callback(request):
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'DISCORD':
                 return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            if not user.is_active:
+                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
