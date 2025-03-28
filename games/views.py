@@ -1,5 +1,6 @@
 import re
 
+from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count
@@ -420,8 +421,10 @@ class GameDetailAPIView(APIView):
         # 기존 스크린샷 유지 또는 삭제
         old_screenshots = self.request.data.getlist('old_screenshots', [])
         old_screenshots = [int(pk) for pk in old_screenshots]
-        Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots).delete()
-        
+        for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
+            default_storage.delete(item.src.name)
+            item.delete()
+
         # 새로운 스크린샷 업로드
         # 스크린샷 검증
         screenshots = self.request.FILES.getlist("new_screenshots")
