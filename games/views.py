@@ -417,17 +417,21 @@ class GameDetailAPIView(APIView):
             except GameCategory.DoesNotExist:
                 return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 기존 스크린샷 삭제 후 새 스크린샷 등록
-        screenshots = request.FILES.getlist("screenshots")
-        if screenshots:
-            for screenshot in screenshots:
-                is_valid, error_msg = validate_image(screenshot)
-                if not is_valid:
-                    return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-            Screenshot.objects.filter(game=game).delete()
-            for item in screenshots:
-                Screenshot.objects.create(src=item, game=game)
-            changes.append("screenshots")
+        # 기존 스크린샷 유지 또는 삭제
+        old_screenshots = self.request.data.getlist('old_screenshots', [])
+        old_screenshots = [int(pk) for pk in old_screenshots]
+        Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots).delete()
+        
+        # 새로운 스크린샷 업로드
+        # 스크린샷 검증
+        screenshots = self.request.FILES.getlist("new_screenshots")
+        for screenshot in screenshots:
+            is_valid, error_msg = validate_image(screenshot)
+            if not is_valid:
+                return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+        # 데이터 추가
+        for item in screenshots:
+            screenshot = Screenshot.objects.create(src=item, game=game)
 
         # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
         if changes:
@@ -466,6 +470,34 @@ class GameDetailAPIView(APIView):
             return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# @api_view(['POST', 'PUT'])
+# @permission_classes([IsAuthenticated])
+# def manage_screenshots(request, game_pk):
+#     game = get_object_or_404(Game, pk=game_pk)
+    
+#     if request.method.lower() == 'put':  # PUT 요청인 경우 제작자 본인인지 확인
+#         if not request.user == game.maker:
+#             pass
+            
+#     # 기존 스크린샷 유지 또는 삭제
+#     old_screenshots = request.data.getlist('old_screenshots', [])
+#     old_screenshots = [int(pk) for pk in old_screenshots]
+#     Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots).delete()
+    
+#     # 새로운 스크린샷 업로드
+#     # 스크린샷 검증
+#     screenshots = request.FILES.getlist("new_screenshots")
+#     for screenshot in screenshots:
+#         is_valid, error_msg = validate_image(screenshot)
+#         if not is_valid:
+#             return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+#     # 데이터 추가
+#     for item in screenshots:
+#         screenshot = Screenshot.objects.create(src=item, game=game)
+    
+#     return Response({"message": "스크린샷 처리를 완료했습니다"}, status=status.HTTP_200_OK)
 
 
 class GameLikeAPIView(APIView):
