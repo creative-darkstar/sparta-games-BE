@@ -386,6 +386,9 @@ class GameDetailAPIView(APIView):
             if not is_valid:
                 return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             if thumbnail != game.thumbnail:
+                # 기존 파일 s3에서 삭제
+                default_storage.delete(game.thumbnail.name)
+                # request로 받은 파일로 교체
                 game.thumbnail = thumbnail
                 changes.append("thumbnail")
 
