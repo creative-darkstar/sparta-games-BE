@@ -37,6 +37,7 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
+from spartagames.utils import std_response
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode

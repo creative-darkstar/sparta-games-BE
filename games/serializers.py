@@ -3,33 +3,46 @@ from .models import Game, Review, GameCategory, Screenshot, ReviewsLike, Like
 
 
 class GameListSerializer(serializers.ModelSerializer):
-    maker_name = serializers.CharField(source='maker.nickname')
-    chip_names= serializers.SerializerMethodField()
+    maker_data = serializers.SerializerMethodField()
+    chips= serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
-    category_name = serializers.SerializerMethodField()
+    category_data = serializers.SerializerMethodField()
     star = serializers.SerializerMethodField()
+    
     class Meta:
         model = Game
-        fields = ("pk", "title", "thumbnail",
-                  "star", "maker_name","content","chip_names","is_liked","category_name")
+        fields = ("id", "title", "thumbnail",
+                  "star", "maker_data", "content", "chips", "is_liked", "category_data")
+    
+    def get_maker_data(self, obj):
+        return {
+            "id": obj.maker.id,
+            "nickname": obj.maker.nickname,
+        }
     
     def get_star(self, obj):
         return round(obj.star, 2) if obj.star is not None else 0
     
-    def get_chip_names(self, obj):
-        #칩 우선순위 리스트
-        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
+    def get_chips(self, obj):
         chips = obj.chip.all()
         difficulty_chips = ["EASY", "NORMAL", "HARD"]
-        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
-        result = [difficulty_chip.name] if difficulty_chip else []
+        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
 
-        for priority_chip in priority_chips:
-            if len(result) < 3:  # Limit to a maximum of 3 chips
-                chip = chips.filter(name=priority_chip).first()
-                if chip:
-                    result.append(chip.name)
-        # Chip 객체의 name 필드를 리스트로 반환
+        result = []
+
+        # 난이도 칩 하나 선택
+        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
+        if difficulty_chip:
+            result.append({"id": difficulty_chip.id, "name": difficulty_chip.name})
+
+        # 우선순위 칩 최대 2개 추가
+        for chip_name in priority_chips:
+            if len(result) >= 3:
+                break
+            chip = chips.filter(name=chip_name).first()
+            if chip:
+                result.append({"id": chip.id, "name": chip.name})
+
         return result
     
     def get_is_liked(self, obj):
@@ -39,9 +52,9 @@ class GameListSerializer(serializers.ModelSerializer):
             return Like.objects.filter(user=user, game=obj).exists()
         return False
     
-    def get_category_name(self, obj):
-        # 카테고리 이름 리스트를 반환
-        return [category.name for category in obj.category.all()]
+    def get_category_data(self, obj):
+        # 카테고리 리스트를 반환
+        return [{"id": category.id, "name": category.name,} for category in obj.category.all()]
 
 
 class GameCreateSerializer(serializers.ModelSerializer):
@@ -52,15 +65,23 @@ class GameCreateSerializer(serializers.ModelSerializer):
 
 
 class GameDetailSerializer(serializers.ModelSerializer):
-    maker_name = serializers.CharField(source='maker.nickname')
+    maker_data = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
-    chip_names= serializers.SerializerMethodField()
+    chips= serializers.SerializerMethodField()
     star = serializers.SerializerMethodField()
 
     class Meta:
         model = Game
-        fields = "__all__"
+        fields = ("id", "maker_data", "title", "thumbnail",
+                  "star", "content", "chips", "is_liked", "youtube_url",
+                  "gamefile", "gamepath", "register_state", "is_visible", "review_cnt")
         read_only_fields = ('maker',)
+    
+    def get_maker_data(self, obj):
+        return {
+            "id": obj.maker.id,
+            "nickname": obj.maker.nickname,
+        }
     
     def get_star(self, obj):
         return round(obj.star, 2) if obj.star is not None else 0
@@ -71,29 +92,32 @@ class GameDetailSerializer(serializers.ModelSerializer):
             return Like.objects.filter(user=user, game=obj).exists()
         return False
     
-    def get_chip_names(self, obj):
-        #칩 우선순위 리스트
-        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
+    def get_chips(self, obj):
         chips = obj.chip.all()
         difficulty_chips = ["EASY", "NORMAL", "HARD"]
-        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
-        result = [difficulty_chip.name] if difficulty_chip else []
+        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
 
-        for priority_chip in priority_chips:
-            if len(result) < 3:  # Limit to a maximum of 3 chips
-                chip = chips.filter(name=priority_chip).first()
-                if chip:
-                    result.append(chip.name)
-        # Chip 객체의 name 필드를 리스트로 반환
+        result = []
+
+        # 난이도 칩 하나 선택
+        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
+        if difficulty_chip:
+            result.append({"id": difficulty_chip.id, "name": difficulty_chip.name})
+
+        # 우선순위 칩 최대 2개 추가
+        for chip_name in priority_chips:
+            if len(result) >= 3:
+                break
+            chip = chips.filter(name=chip_name).first()
+            if chip:
+                result.append({"id": chip.id, "name": chip.name})
+
         return result
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    author_id = serializers.IntegerField(source='author.id', read_only=True)
+    author_data = serializers.SerializerMethodField()
     game_id = serializers.IntegerField(source='game.id', read_only=True)
-    author_name = serializers.CharField(
-        source='author.nickname', read_only=True)
-    author_image = serializers.ImageField(source='author.image', read_only=True)  # 프로필 이미지 추가
     like_count = serializers.SerializerMethodField()
     dislike_count = serializers.SerializerMethodField()
     user_is_like = serializers.SerializerMethodField()
@@ -101,11 +125,17 @@ class ReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Review
         fields = [
-            'id','author_name','like_count','dislike_count','user_is_like',
-            'content','star','difficulty','is_visible','created_at','updated_at',
-            'author_id','game_id','author_image'
+            'id', 'author_data', 'game_id', 'like_count', 'dislike_count', 'user_is_like',
+            'content', 'star', 'difficulty', 'is_visible', 'created_at', 'updated_at',
         ]
         read_only_fields = ('is_visible', 'game', 'author',)
+    
+    def get_author_data(self, obj):
+        return {
+            "id": obj.author.id,
+            "nickname": obj.author.nickname,
+            "image": obj.author.image.url if obj.author.image else '',
+        }
     
     def get_like_count(self, obj):
         return ReviewsLike.objects.filter(review=obj, is_like=1).count()
@@ -135,4 +165,4 @@ class ScreenshotSerializer(serializers.ModelSerializer):
 class CategorySerailizer(serializers.ModelSerializer):
     class Meta:
         model = GameCategory
-        fields = ('pk', 'name')
+        fields = ('id', 'name')

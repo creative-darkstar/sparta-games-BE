@@ -27,6 +27,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from spartagames import config
+from spartagames.utils import std_response
 from .models import EmailVerification
 
 

@@ -9,6 +9,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from spartagames.utils import std_response
 from spartagames.pagination import CustomPagination
 
 from .serializers import MyGameListSerializer

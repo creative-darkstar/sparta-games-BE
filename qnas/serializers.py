@@ -21,17 +21,23 @@ class CategorySerializer(serializers.Serializer):
 
 
 class GameRegisterListSerializer(serializers.ModelSerializer):
-    maker_name = serializers.CharField(source='maker.nickname')
-    category_name = serializers.SerializerMethodField()
+    maker_data = serializers.SerializerMethodField()
+    category_data = serializers.SerializerMethodField()
     game_register_logs = serializers.SerializerMethodField()
     class Meta:
         model = Game
-        fields = ("pk", "title", "register_state", "maker_name", "category_name", "game_register_logs")
+        fields = ("id", "title", "register_state", "maker_data", "category_data", "game_register_logs")
     
-    def get_category_name(self, obj):
-        # 카테고리 이름 리스트를 반환
-        return [category.name for category in obj.category.all()]
+    def get_maker_data(self, obj):
+        return {
+            "id": obj.maker.id,
+            "nickname": obj.maker.nickname,
+        }
+    
+    def get_category_data(self, obj):
+        # 카테고리 리스트를 반환
+        return [{"id": category.id, "name": category.name,} for category in obj.category.all()]
     
     def get_game_register_logs(self, obj):
-        # 카테고리 이름 리스트를 반환
+        # 로그 리스트를 반환
         return [{"created_at": log.created_at, "content": log.content} for log in obj.logs_game.filter(game=obj).order_by("-created_at")][:2]
