@@ -635,12 +635,14 @@ class ReviewAPIView(APIView):
             else: #로그인X
                 all_reviews.insert(0,{})
 
-        return Response(response_data) 
+        # return Response(response_data) 
         return std_response(
-            data=response_data,
+            data=response_data["results"],
             status="success",
             pagination={
-
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"],
             },
             status_code=status.HTTP_200_OK
         )
