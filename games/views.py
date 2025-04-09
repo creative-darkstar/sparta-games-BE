@@ -637,9 +637,7 @@ class ReviewAPIView(APIView):
 
         return Response(response_data) 
         return std_response(
-            data={
-                response_data
-            },
+            data=response_data,
             status="success",
             pagination={
 
@@ -679,9 +677,7 @@ class ReviewAPIView(APIView):
             assign_chip_based_on_difficulty(game)
             # return Response(serializer.data, status=status.HTTP_201_CREATED)
             return std_response(
-                data={
-                    serializer.data
-                },
+                data=serializer.data,
                 status="success",
                 status_code=status.HTTP_201_CREATED
             )
@@ -717,9 +713,7 @@ class ReviewDetailAPIView(APIView):
         serializer = ReviewSerializer(review, context={'user': request.user})
         # return Response(serializer.data, status=status.HTTP_200_OK)
         return std_response(
-            data={
-                serializer.data
-            },
+            data=serializer.data,
             status="success",
             status_code=status.HTTP_200_OK
         )
@@ -758,9 +752,7 @@ class ReviewDetailAPIView(APIView):
                 assign_chip_based_on_difficulty(review.game)
                 # return Response(serializer.data, status=status.HTTP_200_OK)
                 return std_response(
-                    data={
-                        serializer.data
-                    },
+                    data=serializer.data,
                     status="success",
                     status_code=status.HTTP_200_OK
                 )
@@ -883,9 +875,7 @@ class CategoryAPIView(APIView):
         serializer = CategorySerailizer(categories, many=True)
         # return Response(serializer.data, status=status.HTTP_200_OK)
         return std_response(
-            data={
-                serializer.data
-            },
+            data=serializer.data,
             status="success",
             status_code=status.HTTP_200_OK
         )
