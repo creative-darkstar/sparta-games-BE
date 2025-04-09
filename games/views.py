@@ -592,7 +592,7 @@ class ReviewAPIView(APIView):
             "created_at": None,
             "updated_at": None,
             "author_id": None,
-            "game_id": game_pk
+            "game_id": game_id
         }
 
         # `my_review`를 포함한 쿼리셋 생성
