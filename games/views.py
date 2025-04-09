@@ -609,7 +609,13 @@ class ReviewAPIView(APIView):
             paginated_reviews.pop(0)
 
         if paginated_reviews is None:
-            return Response({"message": "리뷰가 없습니다."}, status=404)
+            # return Response({"message": "리뷰가 없습니다."}, status=404)
+            return std_response(
+                message="리뷰가 없습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
 
         # 직렬화
         serializer = ReviewSerializer(paginated_reviews, many=True, context={'user': request.user})
@@ -630,18 +636,38 @@ class ReviewAPIView(APIView):
                 all_reviews.insert(0,{})
 
         return Response(response_data) 
+        return std_response(
+            data={
+                response_data
+            },
+            status="success",
+            pagination={
+
+            },
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request, game_id):
         game = get_object_or_404(Game, pk=game_id)  # game 객체를 올바르게 설정
 
         # 이미 리뷰를 작성한 사용자인 경우 등록 거부
         if game.reviews.filter(author__pk=request.user.pk, is_visible=True).exists():
-            return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"message": "이미 리뷰를 등록한 사용자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="이미 리뷰를 등록한 사용자입니다.",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
 
         # 별점 계산
         star = request.data.get('star')
         if star not in [1, 2, 3, 4, 5]:
-            return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="올바른 별점이 아닙니다.",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         game.star = game.star + ((star - game.star) / (game.review_cnt + 1))
         game.review_cnt = game.review_cnt + 1
         game.save()
@@ -651,8 +677,20 @@ class ReviewAPIView(APIView):
         if serializer.is_valid(raise_exception=True):
             serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
             assign_chip_based_on_difficulty(game)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            # return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return std_response(
+                data={
+                    serializer.data
+                },
+                status="success",
+                status_code=status.HTTP_201_CREATED
+            )
+        # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            data=serializer.errors,
+            status="fail",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 class ReviewDetailAPIView(APIView):
@@ -670,9 +708,21 @@ class ReviewDetailAPIView(APIView):
             review = Review.objects.get(pk=review_id, is_visible=True)
         except Review.DoesNotExist:
             # 리뷰가 존재하지 않으면 404 응답과 함께 메시지 반환
-            return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            # return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            return std_response(
+                message="상세 평가 기록이 없습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
         serializer = ReviewSerializer(review, context={'user': request.user})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # return Response(serializer.data, status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                serializer.data
+            },
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
     def put(self, request, review_id):
         try:
@@ -680,7 +730,12 @@ class ReviewDetailAPIView(APIView):
             review = get_object_or_404(Review, pk=review_id, is_visible=True)
         except Http404:
             # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
-            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            # return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            return std_response(
+                message="리뷰가 존재하지 않습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
@@ -688,7 +743,12 @@ class ReviewDetailAPIView(APIView):
             game = get_object_or_404(Game, pk=game_id)  # game 객체를 올바르게 설정
             star = request.data.get('star')
             if star not in [1, 2, 3, 4, 5]:
-                return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+                # return Response({"message": "올바른 별점이 아닙니다."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message="올바른 별점이 아닙니다.",
+                    status="fail",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
             game.star = game.star + ((star - request.data.get('pre_star')) / (game.review_cnt))
             game.save()
             serializer = ReviewSerializer(
@@ -696,10 +756,30 @@ class ReviewDetailAPIView(APIView):
             if serializer.is_valid(raise_exception=True):
                 serializer.save()
                 assign_chip_based_on_difficulty(review.game)
-                return Response(serializer.data, status=status.HTTP_200_OK)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                # return Response(serializer.data, status=status.HTTP_200_OK)
+                return std_response(
+                    data={
+                        serializer.data
+                    },
+                    status="success",
+                    status_code=status.HTTP_200_OK
+                )
+            # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                data=serializer.errors,
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        
         else:
-            return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="작성자가 아닙니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
 
     def delete(self, request, review_id):
         try:
@@ -707,7 +787,12 @@ class ReviewDetailAPIView(APIView):
             review = get_object_or_404(Review, pk=review_id, is_visible=True)
         except Http404:
             # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
-            return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            # return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            return std_response(
+                message="리뷰가 존재하지 않습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == review.author or request.user.is_staff == True:
@@ -723,9 +808,19 @@ class ReviewDetailAPIView(APIView):
             review.is_visible = False
             review.save()
             assign_chip_based_on_difficulty(review.game)
-            return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
+            # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
+            return std_response(
+                message="삭제를 완료했습니다",
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         else:
-            return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="작성자가 아닙니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
 
 
 @api_view(['POST'])
@@ -739,7 +834,12 @@ def toggle_review_like(request, review_id):
         review = get_object_or_404(Review, pk=review_id, is_visible=True)
     except Http404:
         # 리뷰가 없을 경우 사용자에게 메시지와 함께 404 응답 반환
-        return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        # return Response({"message": "리뷰가 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        return std_response(
+            message="리뷰가 존재하지 않습니다.",
+            status="fail",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     # ReviewsLike 객체를 가져오거나 새로 생성
     # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
     review_like, _ = ReviewsLike.objects.get_or_create(
@@ -761,7 +861,12 @@ def toggle_review_like(request, review_id):
             review_like.is_like = 0
 
     review_like.save()  # 변경 사항 저장
-    return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
+    # return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
+    return std_response(
+        message=f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다.",
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 class CategoryAPIView(APIView):
@@ -776,30 +881,62 @@ class CategoryAPIView(APIView):
     def get(self, request):
         categories = GameCategory.objects.all()
         serializer = CategorySerailizer(categories, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        # return Response(serializer.data, status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                serializer.data
+            },
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request):
         if request.user.is_staff is False:
-            return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="권한이 없습니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         serializer = CategorySerailizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
             serializer.save()
             category=request.data.get("name")
-            return Response({"message": f"태그({category})를 추가했습니다"}, status=status.HTTP_200_OK)
+            # return Response({"message": f"태그({category})를 추가했습니다"}, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"태그({category})를 추가했습니다",
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
 
     def delete(self, request):
         if request.user.is_staff is False:
-            return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
+            # return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="권한이 없습니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         category = get_object_or_404(GameCategory, pk=request.data['id'])
         category.delete()
-        return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
+        # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
+        return std_response(
+            message="삭제를 완료했습니다",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 class GamePlaytimeAPIView(APIView):
     def get(self, request, game_id):
         # 로그인 여부 확인
         if request.user.is_authenticated is False:
-            return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
+            # return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
+            return std_response(
+                message="로그인이 필요합니다.",
+                status="fail",
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
         if Game.objects.filter(pk=game_id, is_visible=True).exists():
             playtime = PlayLog.objects.create(
                 user=request.user,
@@ -807,14 +944,28 @@ class GamePlaytimeAPIView(APIView):
                 start_at=timezone.now()  # 현재 시간으로 start_time
             )
             playtime_id = playtime.pk
-            return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
+            # return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
+            return std_response(
+                data={
+                    "playtime_id":playtime_id
+                },
+                message="게임 플레이 시작시간 기록을 성공했습니다.",
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         else:
-            return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND)
 
     def post(self, request, game_id):
         # 로그인 여부 확인
         if request.user.is_authenticated is False:
-            return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
+            # return Response({"error": "로그인이 필요합니다."}, status=status.HTTP_401_UNAUTHORIZED)
+            return std_response(
+                message="로그인이 필요합니다.",
+                status="fail",
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
         if Game.objects.filter(pk=game_id, is_visible=True).exists():
             game=get_object_or_404(Game, pk=game_id, is_visible=True)
             playlog = get_object_or_404(PlayLog, pk=request.data.get("playtime_id"))
@@ -829,14 +980,26 @@ class GamePlaytimeAPIView(APIView):
 
             playlog.save()
             totalplaytime.save()
-            return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
-                            "start_time":playlog.start_at,
-                            "end_time":playlog.end_at,
-                            "playtime": playlog.playtime,
-                            "totalplaytime":totalplaytime.totaltime}
-                            , status=status.HTTP_200_OK)
+            # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
+            #                 "start_time":playlog.start_at,
+            #                 "end_time":playlog.end_at,
+            #                 "playtime": playlog.playtime,
+            #                 "totalplaytime":totalplaytime.totaltime}
+            #                 , status=status.HTTP_200_OK)
+            return std_response(
+                data={
+                    "start_time":playlog.start_at,
+                    "end_time":playlog.end_at,
+                    "playtime": playlog.playtime,
+                    "totalplaytime":totalplaytime.totaltime
+                },
+                message="게임 플레이 종료시간 기록을 성공했습니다.",
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         else:
-            return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND)
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)
