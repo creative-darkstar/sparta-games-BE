@@ -329,22 +329,22 @@ class GameDetailAPIView(APIView):
 
         return permissions
 
-    def get_object(self, game_pk):
-        return get_object_or_404(Game, pk=game_pk, is_visible=True)
+    def get_object(self, game_id):
+        return get_object_or_404(Game, pk=game_id, is_visible=True)
 
     """
     게임 상세 조회
     """
 
-    def get(self, request, game_pk):
-        game = self.get_object(game_pk)
+    def get(self, request, game_id):
+        game = self.get_object(game_id)
 
         serializer = GameDetailSerializer(game, context={'user': request.user})
         # data에 serializer.data를 assignment
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
         data = serializer.data
 
-        screenshots = Screenshot.objects.filter(game_id=game_pk)
+        screenshots = Screenshot.objects.filter(game_id=game_id)
         screenshot_serializer = ScreenshotSerializer(screenshots, many=True)
 
         categories = game.category.all()
@@ -359,11 +359,11 @@ class GameDetailAPIView(APIView):
     게임 수정
     """
 
-    def put(self, request, game_pk):
+    def put(self, request, game_id):
         # 변경 사항 추적
         changes = []
 
-        game = self.get_object(game_pk)
+        game = self.get_object(game_id)
 
         # 작성한 유저이거나 관리자일 경우만 허용
         if game.maker != request.user and not request.user.is_staff:
@@ -453,8 +453,8 @@ class GameDetailAPIView(APIView):
     게임 삭제
     """
 
-    def delete(self, request, game_pk):
-        game = self.get_object(game_pk)
+    def delete(self, request, game_id):
+        game = self.get_object(game_id)
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if game.maker == request.user or request.user.is_staff == True:
@@ -504,8 +504,8 @@ class GameDetailAPIView(APIView):
 class GameLikeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
-    def post(self, request, game_pk):
-        game = get_object_or_404(Game, pk=game_pk)
+    def post(self, request, game_id):
+        game = get_object_or_404(Game, pk=game_id)
         like_instance = Like.objects.filter(user=request.user, game=game).first()
         if like_instance:
             # 수정
