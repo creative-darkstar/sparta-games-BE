@@ -309,7 +309,11 @@ def category_games_list(request):
         #)
     
     # 카테고리 존재 여부 확인
-    category = get_object_or_404(GameCategory, name=category_name)
+    #category = get_object_or_404(GameCategory, name=category_name)
+    try:
+        category = GameCategory.objects.get(name=category_name)
+    except GameCategory.DoesNotExist:
+        return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     # 해당 카테고리에 속하는 게임 필터링
     games = Game.objects.filter(
@@ -351,7 +355,11 @@ class GameDetailAPIView(APIView):
         return permissions
 
     def get_object(self, game_id):
-        return get_object_or_404(Game, pk=game_id, is_visible=True)
+        #return get_object_or_404(Game, pk=game_id, is_visible=True)
+        try:
+            return Game.objects.get(pk=game_id, is_visible=True)
+        except Game.DoesNotExist:
+            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     """
     게임 상세 조회
@@ -535,7 +543,11 @@ class GameLikeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, game_id):
-        game = get_object_or_404(Game, pk=game_id)
+        #game = get_object_or_404(Game, pk=game_id)
+        try:
+            game=Game.objects.get(pk=game_id)
+        except Game.DoesNotExist:
+            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
         like_instance = Like.objects.filter(user=request.user, game=game).first()
         if like_instance:
             # 수정
