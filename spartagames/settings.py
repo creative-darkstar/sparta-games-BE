@@ -182,6 +182,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'qnas.tasks.hard_delete_user',
         'schedule': crontab(hour=6, minute=0),
     },
+    'routine-email-by-token': {
+        'task': 'accounts.tasks.routine_email_by_token',
+        'schedule': crontab(day_of_month=1, hour=6, minute=0, month_of_year='*/3'),
+    },
 }
 
 # Auth User Model - Custom
