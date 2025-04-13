@@ -195,7 +195,7 @@ class GameListAPIView(APIView):
         try:
             category = GameCategory.objects.get(name=category_name)
         except GameCategory.DoesNotExist:
-            return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Game model에 우선 저장
@@ -313,7 +313,7 @@ def category_games_list(request):
     try:
         category = GameCategory.objects.get(name=category_name)
     except GameCategory.DoesNotExist:
-        return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
     
     # 해당 카테고리에 속하는 게임 필터링
     games = Game.objects.filter(
@@ -359,7 +359,7 @@ class GameDetailAPIView(APIView):
         try:
             return Game.objects.get(pk=game_id, is_visible=True)
         except Game.DoesNotExist:
-            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
 
     """
     게임 상세 조회
@@ -449,7 +449,7 @@ class GameDetailAPIView(APIView):
                     game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
                     changes.append("category")
             except GameCategory.DoesNotExist:
-                return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
                 #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 기존 스크린샷 유지 또는 삭제
@@ -547,7 +547,7 @@ class GameLikeAPIView(APIView):
         try:
             game=Game.objects.get(pk=game_id)
         except Game.DoesNotExist:
-            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
         like_instance = Like.objects.filter(user=request.user, game=game).first()
         if like_instance:
             # 수정
