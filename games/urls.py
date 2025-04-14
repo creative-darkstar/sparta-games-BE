@@ -12,11 +12,11 @@ urlpatterns = [
     path("api/list/<int:game_id>/", views.GameDetailAPIView.as_view(), name="game_detail"),
     path("api/list/<int:game_id>/like/", views.GameLikeAPIView.as_view(), name="game_like"),
     # path("api/list/<int:game_pk>/star/", views.GameStarAPIView.as_view(), name="game_star"),
-    path("api/list/<int:game_pk>/reviews/", views.ReviewAPIView.as_view(), name="reviews"),
+    path("api/list/<int:game_id>/reviews/", views.ReviewAPIView.as_view(), name="reviews"),
     path('api/review/<int:review_id>/', views.ReviewDetailAPIView.as_view(), name='review_detail'),
     path('api/review/<int:review_id>/like/', views.toggle_review_like, name='toggle_review_like'),
     path("api/categories/", views.CategoryAPIView.as_view(), name="categories"),
-    path("api/list/<int:game_pk>/playlog/", views.GamePlaytimeAPIView.as_view(), name="playlog"),
+    path("api/list/<int:game_id>/playlog/", views.GamePlaytimeAPIView.as_view(), name="playlog"),
     path('api/chatbot/', views.ChatbotAPIView, name='chatbot'),
 
     # ---------- Web ---------- #
