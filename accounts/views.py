@@ -209,7 +209,15 @@ class SignUpAPIView(APIView):
                     # error_code=None,
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            verification = get_object_or_404(EmailVerification, email=email)
+            try:
+                verification = EmailVerification.objects.get(email=email)
+            except:
+                return std_response(
+                    message="해당 이메일로 인증을 시도한 적이 없습니다.",
+                    status="error",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if verification.verification_code == code:
                 # 기존 이메일 인증 데이터 삭제
                 EmailVerification.objects.filter(email=email).delete()
