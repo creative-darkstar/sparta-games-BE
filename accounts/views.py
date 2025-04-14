@@ -48,7 +48,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user_data = {
-            'pk': self.user.id,
+            'id': self.user.id,
             'email': self.user.email,
             'nickname': self.user.nickname,
         }
@@ -65,19 +65,38 @@ class CustomLoginAPIView(TokenObtainPairView):
         try:
             user = get_user_model().objects.get(email=request.data.get('email'))
             if user.login_type != 'DEFAULT':
-                return Response(
-                    {"error_message": f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."},
-                    status=status.HTTP_400_BAD_REQUEST
+                return std_response(
+                    message=f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
         except get_user_model().DoesNotExist:
             # 2025-03-21 FE팀 요청. 상태 코드 401로 수정 (기존: 200 OK)
-            return Response({
-                'message': '회원가입이 필요합니다.',
-                'email': request.data.get('email'),
-                'login_type': "DEFAULT",
-            }, status=status.HTTP_401_UNAUTHORIZED)
-        response = super().post(request, *args, **kwargs)
-        return response
+            return std_response(
+                message="회원가입이 필요합니다.",
+                status="error",
+                # error_code=None,
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        serializer = super().get_serializer(data=request.data)
+        from rest_framework_simplejwt.exceptions import TokenError
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError:
+            return std_response(
+                message=f"토큰이 유효하지 않거나 만료되었습니다.",
+                status="error",
+                # error_code=None,
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        return std_response(
+            data=serializer.validated_data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 class SignUpAPIView(APIView):
@@ -94,16 +113,20 @@ class SignUpAPIView(APIView):
         game_category = request.data.get("game_category", '')
         game_category = game_category.split(',')
         if len(game_category) > 3:
-            return Response(
-                {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
-                status=status.HTTP_400_BAD_REQUEST
+            return std_response(
+                message="선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         # 전체 게임 카테고리 가져오기
         game_categories = GameCategory.objects.filter(name__in=game_category)
         if not game_categories.exists():
-            return Response(
-                {"error_message": "올바른 game category를 입력해주세요."},
-                status=status.HTTP_400_BAD_REQUEST
+            return std_response(
+                message="올바른 game category를 입력해주세요.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
@@ -111,23 +134,58 @@ class SignUpAPIView(APIView):
         login_type_list = [t[0] for t in get_user_model().LOGIN_TYPE_CHOICES]
         # login_type 유효성 검사
         if not login_type in login_type_list:
-            return Response({"error_message":"올바른 로그인 타입을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="올바른 로그인 타입을 입력해주세요.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # email 유효성 검사
         if not self.EMAIL_PATTERN.match(email):
-            return Response({"error_message":"올바른 email을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="올바른 email을 입력해주세요.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         elif get_user_model().objects.filter(email=email).exists():
-            return Response({"error_message":"이미 존재하는 email입니다.."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="이미 존재하는 email입니다.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         # nickname 유효성 검사
         if len(nickname) == 0:
-            return Response({"error_message":"닉네임을 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="닉네임을 입력해주세요.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         elif len(nickname) > 30 or len(nickname) < 4:
-            return Response({"error_message":"닉네임은 4자 이상 10자 이하만 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="닉네임은 4자 이상 10자 이하만 가능합니다.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         elif not self.NICKNAME_PATTERN.match(nickname):
-            return Response({"error_message":"올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         elif get_user_model().objects.filter(nickname=nickname).exists():
-            return Response({"error_message":"이미 존재하는 nickname입니다."}, status=status.HTTP_400_BAD_REQUEST)
+            return std_response(
+                message="이미 존재하는 nickname입니다.",
+                status="fail",
+                # error_code=None,
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         
         
         # 일반 로그인일 경우 비밀번호 유효성 검증 후 유저 데이터 추가
@@ -138,15 +196,38 @@ class SignUpAPIView(APIView):
             
             # password 유효성 검사
             if not self.PASSWORD_PATTERN.match(password):
-                return Response({"error_message":"올바른 password.password_check를 입력해주세요."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message="올바른 password, password_check를 입력해주세요.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             elif not password == password_check:
-                return Response({"error_message":"암호를 확인해주세요."}, status=status.HTTP_400_BAD_REQUEST)
-            verification = get_object_or_404(EmailVerification, email=email)
+                return std_response(
+                    message="암호를 확인해주세요.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                verification = EmailVerification.objects.get(email=email)
+            except:
+                return std_response(
+                    message="해당 이메일로 인증을 시도한 적이 없습니다.",
+                    status="error",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if verification.verification_code == code:
                 # 기존 이메일 인증 데이터 삭제
                 EmailVerification.objects.filter(email=email).delete()
             else:
-                return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message="잘못된 인증 번호입니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             
             # DB에 유저 등록
             user = get_user_model().objects.create_user(
@@ -185,14 +266,19 @@ class SignUpAPIView(APIView):
         token = RefreshToken.for_user(user)
         data = {
             'user': {
-                'pk': user.id,
+                'id': user.id,
                 'email': user.email,
                 'nickname': user.nickname,
             },
             'access': str(token.access_token),
             'refresh': str(token),
         }
-        return Response({'message': f'회원가입 및 {login_type} 로그인 성공', **data}, status=status.HTTP_200_OK)
+        return std_response(
+            message=f"회원가입 및 {login_type} 로그인 성공",
+            data=data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 @api_view(('GET',))
@@ -214,10 +300,14 @@ def google_login_callback(request):
         tokens_request = requests.post(url, headers=headers, data=data)
         tokens_json = tokens_request.json()
     except Exception as e:
-        print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"구글 소셜 로그인 콜백 함수 에러 ({str(e)})",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
@@ -230,37 +320,67 @@ def google_login_callback(request):
         try:
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'GOOGLE':
-                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message=f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if not user.is_active:
-                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
+                return std_response(
+                    message="해당 유저는 탈퇴 처리된 유저입니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            return Response({'message': '구글 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"구글 소셜 로그인 성공. 기존 회원입니다.",
+                data=data,
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         except get_user_model().DoesNotExist:
-            return Response({
-                'message': '구글 소셜 로그인 성공, 회원가입이 필요합니다.',
-                'email': email,
-                'login_type': "GOOGLE",
-            }, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"구글 소셜 로그인 성공. 회원가입이 필요합니다.",
+                data={
+                    "email": email,
+                    # "nickname": nickname,
+                    "login_type": "GOOGLE",
+                },
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         # return social_signinup(email=email, username=username, provider="구글")
         
     except AlertException as e:
         print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_406_NOT_ACCEPTABLE
+        )
     except TokenException as e:
         print(e)
         # 개발 단계에서 확인
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
         
 
 @api_view(('GET',))
@@ -279,10 +399,14 @@ def naver_login_callback(request):
         tokens_request = requests.get(url, params=data)
         tokens_json = tokens_request.json()
     except Exception as e:
-        print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"네이버 소셜 로그인 콜백 함수 에러 ({str(e)})",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     try:
         access_token = tokens_json["access_token"]
@@ -298,37 +422,67 @@ def naver_login_callback(request):
         try:
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'NAVER':
-                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message=f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if not user.is_active:
-                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
+                return std_response(
+                    message="해당 유저는 탈퇴 처리된 유저입니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            return Response({'message': '네이버 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"네이버 소셜 로그인 성공. 기존 회원입니다.",
+                data=data,
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         except get_user_model().DoesNotExist:
-            return Response({
-                'message': '네이버 소셜 로그인 성공, 회원가입이 필요합니다.',
-                'email': email,
-                'login_type': "NAVER",
-            }, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"네이버 소셜 로그인 성공. 회원가입이 필요합니다.",
+                data={
+                    "email": email,
+                    # "nickname": nickname,
+                    "login_type": "NAVER",
+                },
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         # return social_signinup(email=email, username=username, provider="네이버")
 
     except AlertException as e:
         print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_406_NOT_ACCEPTABLE
+        )
     except TokenException as e:
         print(e)
         # 개발 단계에서 확인
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 @api_view(('GET',))
@@ -348,10 +502,14 @@ def kakao_login_callback(request):
         tokens_request = requests.post(url, headers=headers, data=data)
         tokens_json = tokens_request.json()
     except Exception as e:
-        print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"카카오 소셜 로그인 콜백 함수 에러 ({str(e)})",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
@@ -365,45 +523,74 @@ def kakao_login_callback(request):
         profile_json = profile_request.json()
         
         account = profile_json.get('kakao_account', None)
-        nickname = account["profile"]["nickname"]
         email = account["email"]
+        # nickname = account["profile"]["nickname"]
         
         try:
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'KAKAO':
-                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message=f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if not user.is_active:
-                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
+                return std_response(
+                    message="해당 유저는 탈퇴 처리된 유저입니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            return Response({'message': '카카오 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"카카오 소셜 로그인 성공. 기존 회원입니다.",
+                data=data,
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         except get_user_model().DoesNotExist:
-            return Response({
-                'message': '카카오 소셜 로그인 성공, 회원가입이 필요합니다.',
-                'email': email,
-                'nickname': nickname,
-                'account': account,
-                'login_type': "KAKAO",
-            }, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"카카오 소셜 로그인 성공. 회원가입이 필요합니다.",
+                data={
+                    "email": email,
+                    # "nickname": nickname,
+                    # "account": account,
+                    "login_type": "KAKAO",
+                },
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         # return social_signinup(email=email, username=username, provider="카카오")
 
     except AlertException as e:
         print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_406_NOT_ACCEPTABLE
+        )
     except TokenException as e:
         print(e)
         # 개발 단계에서 확인
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 @api_view(('GET',))
@@ -428,7 +615,12 @@ def discord_login_callback(request):
         print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"디스코드 소셜 로그인 콜백 함수 에러 ({str(e)})",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # token 유효성 확인 및 로그인 진행, 유저 정보 전달
     try:
@@ -441,44 +633,73 @@ def discord_login_callback(request):
         profile_request = requests.get(url, headers=headers)
         profile_json = profile_request.json()
         
-        nickname = profile_json.get('username', None)
         email = profile_json.get('email', None)
+        # nickname = profile_json.get('username', None)
         
         try:
             user = get_user_model().objects.get(email=email)
             if user.login_type != 'DISCORD':
-                return Response({'message': f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message=f"해당 유저는 기존에 {user.login_type} 로그인 방식으로 가입했습니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
             if not user.is_active:
-                return Response({'message': f"해당 유저는 탈퇴 처리된 유저입니다."}, status=status.HTTP_401_UNAUTHORIZED)
+                return std_response(
+                    message="해당 유저는 탈퇴 처리된 유저입니다.",
+                    status="fail",
+                    # error_code=None,
+                    status_code=status.HTTP_401_UNAUTHORIZED
+                )
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
                 'access': str(token.access_token),
                 'refresh': str(token),
             }
-            return Response({'message': '디스코드 소셜 로그인 성공, 기존 회원입니다.', **data}, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"디스코드 소셜 로그인 성공. 기존 회원입니다.",
+                data=data,
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         except get_user_model().DoesNotExist:
-            return Response({
-                'message': '디스코드 소셜 로그인 성공, 회원가입이 필요합니다.',
-                'email': email,
-                'nickname': nickname,
-                'login_type': "DISCORD",
-            }, status=status.HTTP_200_OK)
+            return std_response(
+                message=f"디스코드 소셜 로그인 성공. 회원가입이 필요합니다.",
+                data={
+                    "email": email,
+                    # "nickname": nickname,
+                    "login_type": "DISCORD",
+                },
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
         # return social_signinup(email=email, username=username, provider="디스코드")
 
     except AlertException as e:
         print(e)
         messages.error(request, e)
         # 유저에게 알림
-        return Response({'message': str(e)}, status=status.HTTP_406_NOT_ACCEPTABLE)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_406_NOT_ACCEPTABLE
+        )
     except TokenException as e:
         print(e)
         # 개발 단계에서 확인
-        return Response({'message': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=str(e),
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 # 이메일 인증 관련 상수 값
@@ -509,23 +730,40 @@ def email_verification(request):
     is_new = request.data.get("is_new", '')
     
     if not email:
-        return Response({'error': "이메일을 입력하지 않았습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="이메일을 입력하지 않았습니다.",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # 해당 이메일의 유저 정보 가져오기=>중복 쿼리로 DB 성능 저하 가능성으로 한개로 처리
     user = get_user_model().objects.filter(email=email).first()
 
     # 소셜 로그인 타입 검사
     if user and user.login_type != "DEFAULT":
-        return Response(
-            {'error': f"해당 유저는 기존에 [{user.login_type}] 로그인 방식으로 가입했습니다."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message=f"해당 유저는 기존에 [{user.login_type}] 로그인 방식으로 가입했습니다.",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     # 회원가입할 때(is_new=True) -> 이미 존재하는 이메일이면 에러
     if is_new and user:
-            return Response({'error': '이미 가입한 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"이미 해당 이메일로 가입했습니다.",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     # 비밀번호 리셋시(is_new=False) -> 존재하지 않는 이메일이면 에러
     if not is_new and not user:
-        return Response({'error': '존재하지 않는 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"존재하지 않는 이메일입니다.",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # 기존 이메일 인증 데이터 삭제=>여기서 이미 삭제 하기에 아래에는 필요가 없음(뭐가 있든 지우고 있기때문)
     EmailVerification.objects.filter(email=email).delete()
@@ -546,14 +784,23 @@ def email_verification(request):
 
     try:
         message = (service.users().messages().send(userId='me', body=message).execute())
-    except Exception as error:
-        print(f'An error occurred: {error}')
-        return Response({'message': str(error)}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        print(f'An error occurred: {e}')
+        return std_response(
+            message=f"이메일 전송 중 에러가 발생했습니다. ({str(e)})",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
-    #이메일 인증 데이터 저장
+    # 이메일 인증 데이터 저장
     EmailVerification.objects.create(email=email, verification_code=code)
     
-    return Response({'message': f"인증번호를 발송했습니다. (이메일 message id: {message['id']})"}, status=status.HTTP_200_OK)
+    return std_response(
+        message=f"인증번호를 발송했습니다. (이메일 message id: {message["id"]})",
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 @api_view(('POST',))
@@ -565,15 +812,34 @@ def verify_code(request):
     try:
         verification = EmailVerification.objects.get(email=email)
     except EmailVerification.DoesNotExist:
-        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="유효하지 않은 이메일입니다.",
+            status="error",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.is_expired():
-        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="인증 번호가 만료되었습니다.",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.verification_code == code:
-        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+        return std_response(
+            message=f"이메일 인증이 완료되었습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
     else:
-        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="잘못된 인증 번호입니다",
+            status="fail",
+            # error_code=None,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 # # 회원가입 또는 로그인을 처리하는 함수
