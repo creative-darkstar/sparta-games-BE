@@ -48,7 +48,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         data = super().validate(attrs)
         user_data = {
-            'pk': self.user.id,
+            'id': self.user.id,
             'email': self.user.email,
             'nickname': self.user.nickname,
         }
@@ -258,7 +258,7 @@ class SignUpAPIView(APIView):
         token = RefreshToken.for_user(user)
         data = {
             'user': {
-                'pk': user.id,
+                'id': user.id,
                 'email': user.email,
                 'nickname': user.nickname,
             },
@@ -328,7 +328,7 @@ def google_login_callback(request):
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
@@ -430,7 +430,7 @@ def naver_login_callback(request):
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
@@ -537,7 +537,7 @@ def kakao_login_callback(request):
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
@@ -647,7 +647,7 @@ def discord_login_callback(request):
             token = RefreshToken.for_user(user)
             data = {
                 'user': {
-                    'pk': user.id,
+                    'id': user.id,
                     'email': user.email,
                     'nickname': user.nickname,
                 },
