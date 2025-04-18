@@ -695,7 +695,7 @@ class ReviewAPIView(APIView):
     def post(self, request, game_id):
         # game = get_object_or_404(Game, pk=game_id)  # game 객체를 올바르게 설정
         try:
-            game = Game.object.get(pk=game_id)#, is_visible=True)
+            game = Game.objects.get(pk=game_id)#, is_visible=True)
         except:
             return std_response(
                 message="게임이 존재하지 않습니다.",
