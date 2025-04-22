@@ -673,7 +673,8 @@ class ReviewAPIView(APIView):
             return std_response(
                 message="리뷰가 없습니다.",
                 status="fail",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
             )
 
 
@@ -710,12 +711,13 @@ class ReviewAPIView(APIView):
     def post(self, request, game_id):
         # game = get_object_or_404(Game, pk=game_id)  # game 객체를 올바르게 설정
         try:
-            game = Game.object.get(pk=game_id)#, is_visible=True)
+            game = Game.objects.get(pk=game_id)#, is_visible=True)
         except:
             return std_response(
                 message="게임이 존재하지 않습니다.",
                 status="error",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
                 )
 
         # 이미 리뷰를 작성한 사용자인 경우 등록 거부
@@ -724,7 +726,8 @@ class ReviewAPIView(APIView):
             return std_response(
                 message="이미 리뷰를 등록한 사용자입니다.",
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="SERVER_FAIL"
             )
 
         # 별점 계산
@@ -734,7 +737,8 @@ class ReviewAPIView(APIView):
             return std_response(
                 message="올바른 별점이 아닙니다.",
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
             )
         game.star = game.star + ((star - game.star) / (game.review_cnt + 1))
         game.review_cnt = game.review_cnt + 1
@@ -755,7 +759,8 @@ class ReviewAPIView(APIView):
         return std_response(
             data=serializer.errors,
             status="fail",
-            status_code=status.HTTP_400_BAD_REQUEST
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="SERVER_FAIL"
         )
 
 
@@ -778,7 +783,8 @@ class ReviewDetailAPIView(APIView):
             return std_response(
                 message="상세 평가 기록이 없습니다.",
                 status="fail",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
             )
         serializer = ReviewSerializer(review, context={'user': request.user})
         # return Response(serializer.data, status=status.HTTP_200_OK)
@@ -799,7 +805,8 @@ class ReviewDetailAPIView(APIView):
             return std_response(
                 message="리뷰가 존재하지 않습니다.",
                 status="fail",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
             )
 
         # 작성한 유저이거나 관리자일 경우 동작함
@@ -812,7 +819,8 @@ class ReviewDetailAPIView(APIView):
                 return std_response(
                     message="게임이 존재하지 않습니다.",
                     status="error",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
                     )
             star = request.data.get('star')
             if star not in [1, 2, 3, 4, 5]:
@@ -820,8 +828,9 @@ class ReviewDetailAPIView(APIView):
                 return std_response(
                     message="올바른 별점이 아닙니다.",
                     status="fail",
-                    status_code=status.HTTP_404_NOT_FOUND
-                )
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="CLIENT_FAIL"
+                    )
             game.star = game.star + ((star - request.data.get('pre_star')) / (game.review_cnt))
             game.save()
             serializer = ReviewSerializer(
@@ -839,7 +848,8 @@ class ReviewDetailAPIView(APIView):
             return std_response(
                 data=serializer.errors,
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="SERVER_FAIL"
             )
         
         
@@ -863,7 +873,8 @@ class ReviewDetailAPIView(APIView):
             return std_response(
                 message="리뷰가 존재하지 않습니다.",
                 status="fail",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
             )
 
         # 작성한 유저이거나 관리자일 경우 동작함
@@ -876,7 +887,8 @@ class ReviewDetailAPIView(APIView):
                 return std_response(
                     message="게임이 존재하지 않습니다.",
                     status="error",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
                     )
             if game.review_cnt > 1:
                 game.star = game.star + \
@@ -899,7 +911,8 @@ class ReviewDetailAPIView(APIView):
             return std_response(
                 message="작성자가 아닙니다",
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
             )
 
 
@@ -919,7 +932,8 @@ def toggle_review_like(request, review_id):
         return std_response(
             message="리뷰가 존재하지 않습니다.",
             status="fail",
-            status_code=status.HTTP_404_NOT_FOUND
+            status_code=status.HTTP_404_NOT_FOUND,
+            error_code="SERVER_FAIL"
         )
     # ReviewsLike 객체를 가져오거나 새로 생성
     # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
@@ -975,7 +989,8 @@ class CategoryAPIView(APIView):
             return std_response(
                 message="권한이 없습니다",
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
             )
         serializer = CategorySerailizer(data=request.data)
         if serializer.is_valid(raise_exception=True):
@@ -994,7 +1009,8 @@ class CategoryAPIView(APIView):
             return std_response(
                 message="권한이 없습니다",
                 status="fail",
-                status_code=status.HTTP_400_BAD_REQUEST
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
             )
         # category = get_object_or_404(GameCategory, pk=request.data['id'])
         try:
@@ -1003,7 +1019,8 @@ class CategoryAPIView(APIView):
             return std_response(
                 message="카테고리가 존재하지 않습니다.",
                 status="error",
-                status_code=status.HTTP_404_NOT_FOUND
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
                 )
         category.delete()
         # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
@@ -1022,7 +1039,8 @@ class GamePlaytimeAPIView(APIView):
             return std_response(
                 message="로그인이 필요합니다.",
                 status="fail",
-                status_code=status.HTTP_401_UNAUTHORIZED
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                error_code="CLIENT_FAIL"
             )
         if Game.objects.filter(pk=game_id, is_visible=True).exists():
             try:
@@ -1031,7 +1049,8 @@ class GamePlaytimeAPIView(APIView):
                 return std_response(
                     message="게임이 존재하지 않습니다.",
                     status="error",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
                     )
             playtime = PlayLog.objects.create(
                 user=request.user,
@@ -1050,7 +1069,7 @@ class GamePlaytimeAPIView(APIView):
             )
         else:
             # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
 
     def post(self, request, game_id):
         # 로그인 여부 확인
@@ -1059,7 +1078,8 @@ class GamePlaytimeAPIView(APIView):
             return std_response(
                 message="로그인이 필요합니다.",
                 status="fail",
-                status_code=status.HTTP_401_UNAUTHORIZED
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                error_code="CLIENT_FAIL"
             )
         if Game.objects.filter(pk=game_id, is_visible=True).exists():
             # game=get_object_or_404(Game, pk=game_id, is_visible=True)
@@ -1069,7 +1089,8 @@ class GamePlaytimeAPIView(APIView):
                 return std_response(
                     message="게임이 존재하지 않습니다.",
                     status="error",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
                     )
             # playlog = get_object_or_404(PlayLog, pk=request.data.get("playtime_id"))
             try:
@@ -1078,7 +1099,8 @@ class GamePlaytimeAPIView(APIView):
                 return std_response(
                     message="로그가 존재하지 않습니다.",
                     status="error",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
                     )
             totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
 
@@ -1110,7 +1132,7 @@ class GamePlaytimeAPIView(APIView):
             )
         else:
             # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)
