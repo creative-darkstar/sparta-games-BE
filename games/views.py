@@ -66,10 +66,10 @@ class GameListAPIView(APIView):
         limit = int(request.query_params.get('limit', 4))
         categories = list(GameCategory.objects.all().values_list('name',flat=True))
         if not categories:
-            return std_response(messeage="카테고리가 존재하지 않는다. 카테고리 생성이 필요하다", status="fail",  status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="카테고리가 존재하지 않는다. 카테고리 생성이 필요하다", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": "카테고리가 존재하지 않는다. 카테고리 생성이 필요하다"}, status=status.HTTP_404_NOT_FOUND)
         if len(categories) < 3:
-            return std_response(messeage="카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다.", status="fail",  status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
         
@@ -159,7 +159,7 @@ class GameListAPIView(APIView):
 
         # 누락된 필수 항목이 있을 경우 에러 메시지 반환
         if missing_fields:
-            return std_response(messeage=f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}", status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+            return std_response(message=f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
             #return Response(
             #    {"error": f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}"},
             #    status=status.HTTP_400_BAD_REQUEST
@@ -169,7 +169,7 @@ class GameListAPIView(APIView):
         if thumbnail:
             is_valid, error_msg = validate_image(thumbnail)
             if not is_valid:
-                return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 스크린샷 검증
@@ -177,25 +177,25 @@ class GameListAPIView(APIView):
         for screenshot in screenshots:
             is_valid, error_msg = validate_image(screenshot)
             if not is_valid:
-                return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # ZIP 파일 검증
         gamefile = request.FILES.get("gamefile")
         is_valid, error_msg = validate_zip_file(gamefile)
         if not is_valid:
-            return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+            return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
             #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 카테고리 이름 가져오기
         category_name = request.data.get('category')
         if not category_name:
-            return std_response(messeage="카테고리는 필수입니다.", status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+            return std_response(message="카테고리는 필수입니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
             #return Response({"error": "카테고리는 필수입니다."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             category = GameCategory.objects.get(name=category_name)
         except GameCategory.DoesNotExist:
-            return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Game model에 우선 저장
@@ -232,7 +232,7 @@ class GameListAPIView(APIView):
             content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
         )
         
-        return std_response(messeage="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -264,7 +264,7 @@ def game_list_search(request):
             games = games.exclude(pk__in=favorite_games.values_list('pk', flat=True))
     all_games = list(favorite_games) + list(games)
     if all_games==[]:
-        return std_response(messeage="게임이 없습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND)
+        return std_response(message="검색한 게임이 없습니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
         #return Response({"message": "게임이 없습니다."}, status=404)
     # 페이지네이션 처리
     paginator = ReviewCustomPagination()
@@ -285,8 +285,14 @@ def game_list_search(request):
                 list_of_games.append(all_games.pop(i))
                 all_games.insert(0,{})
             response_data["results"]["favorite_games"]=list_of_games
+    # 응답 구성용 딕셔너리
+    data_response = {
+        "all_games": response_data["results"]["all_games"]
+    }
+    if request.user.is_authenticated:
+        data_response["favorite_games"] = response_data["results"]["favorite_games"]
 
-    return std_response(data={"all_games":response_data["results"]["all_games"], "favorite_games":response_data["results"]["favorite_games"]},
+    return std_response(data=data_response,
                         message="게임 검색이 완료되었습니다.", status="success",
                         pagination={"count":response_data["count"], "next":response_data["next"], "previous":response_data["previous"]},
                         status_code=status.HTTP_200_OK)
@@ -302,7 +308,7 @@ def category_games_list(request):
     category_name = request.query_params.get('category', None)
     
     if not category_name:
-        return std_response(messeage="category 파라미터가 필요합니다.", status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+        return std_response(message="category 파라미터가 필요합니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
         #return Response(
         #    {"error": "category 파라미터가 필요합니다."},
         #    status=400
@@ -313,7 +319,7 @@ def category_games_list(request):
     try:
         category = GameCategory.objects.get(name=category_name)
     except GameCategory.DoesNotExist:
-        return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
+        return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
     
     # 해당 카테고리에 속하는 게임 필터링
     games = Game.objects.filter(
@@ -323,7 +329,7 @@ def category_games_list(request):
     ).order_by('-created_at')  # 최신순 정렬
 
     if not games.exists():
-        return std_response(messeage=f"카테고리 '{category_name}'에 맞는 게임이 없습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND)
+        return std_response(message=f"카테고리 '{category_name}'에 맞는 게임이 없습니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
         #return Response(
         #    {"message": f"카테고리 '{category_name}'에 맞는 게임이 없습니다."},
         #    status=404  # Not Found
@@ -359,7 +365,7 @@ class GameDetailAPIView(APIView):
         try:
             return Game.objects.get(pk=game_id, is_visible=True)
         except Game.DoesNotExist:
-            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
 
     """
     게임 상세 조회
@@ -367,7 +373,9 @@ class GameDetailAPIView(APIView):
 
     def get(self, request, game_id):
         game = self.get_object(game_id)
-
+        # game이 Response라면 바로 반환
+        if isinstance(game, Response):
+            return game
         serializer = GameDetailSerializer(game, context={'user': request.user})
         # data에 serializer.data를 assignment
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
@@ -394,10 +402,11 @@ class GameDetailAPIView(APIView):
         changes = []
 
         game = self.get_object(game_id)
-
+        if isinstance(game, Response):
+            return game
         # 작성한 유저이거나 관리자일 경우만 허용
         if game.maker != request.user and not request.user.is_staff:
-            return std_response(messeage="작성자가 아닙니다.", status="fail", status_code=status.HTTP_403_FORBIDDEN)
+            return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
             #return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
         # 게임 파일 검증 및 변경 처리
@@ -405,7 +414,7 @@ class GameDetailAPIView(APIView):
         if gamefile:
             is_valid, error_msg = validate_zip_file(gamefile)
             if not is_valid:
-                return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             game.register_state = 0
             game.gamefile = gamefile
@@ -416,7 +425,7 @@ class GameDetailAPIView(APIView):
         if thumbnail:
             is_valid, error_msg = validate_image(thumbnail)
             if not is_valid:
-                return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             if thumbnail != game.thumbnail:
                 game.thumbnail = thumbnail
@@ -449,7 +458,7 @@ class GameDetailAPIView(APIView):
                     game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
                     changes.append("category")
             except GameCategory.DoesNotExist:
-                return std_response(messeage=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
+                return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
                 #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # 기존 스크린샷 유지 또는 삭제
@@ -463,7 +472,7 @@ class GameDetailAPIView(APIView):
         for screenshot in screenshots:
             is_valid, error_msg = validate_image(screenshot)
             if not is_valid:
-                return std_response(messeage=error_msg, status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
         # 데이터 추가
         for item in screenshots:
@@ -482,7 +491,7 @@ class GameDetailAPIView(APIView):
                 content=log_content,
             )
         
-        return std_response(messeage="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """
@@ -491,7 +500,8 @@ class GameDetailAPIView(APIView):
 
     def delete(self, request, game_id):
         game = self.get_object(game_id)
-
+        if isinstance(game, Response):
+            return game
         # 작성한 유저이거나 관리자일 경우 동작함
         if game.maker == request.user or request.user.is_staff == True:
             game.is_visible = False
@@ -504,10 +514,10 @@ class GameDetailAPIView(APIView):
                 game = game,
                 content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
             )
-            return std_response(messeage="게임 삭제가 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+            return std_response(message="게임 삭제가 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
             # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
-            return std_response(messeage="작성자가 아닙니다.", status="fail", status_code=status.HTTP_400_BAD_REQUEST)
+            return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
             #return Response({"error": "작성자가 아닙니다"}, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -540,24 +550,30 @@ class GameDetailAPIView(APIView):
 
 
 class GameLikeAPIView(APIView):
-    permission_classes = [IsAuthenticated]
 
     def post(self, request, game_id):
+        if not request.user.is_authenticated:
+            return std_response(
+                message="로그인이 필요합니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
         #game = get_object_or_404(Game, pk=game_id)
         try:
             game=Game.objects.get(pk=game_id)
         except Game.DoesNotExist:
-            return std_response(messeage="게임이 존재하지 않습니다.", status="error", status_code=status.HTTP_404_NOT_FOUND)
+            return std_response(message="게임이 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
         like_instance = Like.objects.filter(user=request.user, game=game).first()
         if like_instance:
             # 수정
             like_instance.delete()
-            return std_response(messeage="즐겨찾기 취소", status="success", status_code=status.HTTP_200_OK)
+            return std_response(message="즐겨찾기 취소", status="success", status_code=status.HTTP_200_OK)
             #return Response({'message': "즐겨찾기 취소"}, status=status.HTTP_200_OK)
         else:
             # 생성
             Like.objects.create(user=request.user, game=game)
-            return std_response(messeage="즐겨찾기", status="success", status_code=status.HTTP_200_OK)
+            return std_response(message="즐겨찾기", status="success", status_code=status.HTTP_200_OK)
             #return Response({'message': "즐겨찾기"}, status=status.HTTP_200_OK)
 
 
