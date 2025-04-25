@@ -173,7 +173,7 @@ class GameListAPIView(APIView):
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 스크린샷 검증
-        screenshots = request.FILES.getlist("screenshots")
+        screenshots = request.FILES.getlist("new_screenshots")
         for screenshot in screenshots:
             is_valid, error_msg = validate_image(screenshot)
             if not is_valid:
