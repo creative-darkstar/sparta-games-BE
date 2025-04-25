@@ -125,4 +125,4 @@ jobs:
                 \"timestamp\": \"$DEPLOY_TIME\"
               }]
             }" \
-            "$DISCORD_WEBHOOK_GIT_DEPLOY_URL"
+            "$DISCORD_WEBHOOK_URL"
