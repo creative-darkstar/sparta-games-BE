@@ -96,8 +96,8 @@ jobs:
         SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
 
         curl -H "Content-Type: application/json" \
-             -X POST \
-             -d "{
+            -X POST \
+            -d "{
               \"embeds\": [{
                 \"title\": \"$ICON CD 배포 결과 ($STATUS)\",
                 \"description\": \"**[$REPO]** 브랜치 \`$BRANCH\` 에 배포되었습니다.\",
