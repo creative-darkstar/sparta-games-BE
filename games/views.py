@@ -411,6 +411,9 @@ class GameDetailAPIView(APIView):
 
         # 게임 파일 검증 및 변경 처리
         gamefile = request.FILES.get("gamefile")
+        if game.register_state == 2:
+            if not gamefile:
+                return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
         if gamefile:
             is_valid, error_msg = validate_zip_file(gamefile)
             if not is_valid:
