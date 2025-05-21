@@ -26,6 +26,21 @@ MEETING_TYPE_CHOICES = [
 ]
 
 
+ROLE_CHOICES = (
+    ("NONE", "관심분야 없음"),
+    ("ALL", "All"),
+    ("DIR", "Director (PM/PO)"),
+    ("2DG", "2D Graphic"),
+    ("CA", "Concept Art"),
+    ("UXUI", "UX/UI"),
+    ("ART", "Artist"),
+    ("3DG", "3D Graphic"),
+    ("MDL", "Modeler"),
+    ("FE", "Frontend"),
+    ("BE", "Backend"),
+)
+
+
 class TeamBuildPost(models.Model):
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="team_build_posts")
     want_roles = models.JSONField()  # user.user_tech에서 선택한 기술 최대 10개
@@ -54,12 +69,6 @@ class TeamBuildProfile(models.Model):
         ("STUDENT", "대학생"),
         ("JOBSEEKER", "취준생"),
         ("WORKER", "현직자"),
-    ]
-
-    ROLE_CHOICES = settings.AUTH_USER_MODEL.USER_TECH_CHOICES if hasattr(settings.AUTH_USER_MODEL, "USER_TECH_CHOICES") else [
-        ("BE", "Backend"),
-        ("FE", "Frontend"),
-        # 필요시 추가
     ]
 
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="team_build_profile")

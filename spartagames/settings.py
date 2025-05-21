@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     "games",
     "qnas",
     "users",
+    "teambuildings",
 ]
 
 MIDDLEWARE = [
