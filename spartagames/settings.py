@@ -98,7 +98,7 @@ CORS_ALLOWED_ORIGINS = [
     "https://www.sparta-games.net",
     "http://localhost:5173",  # React 앱 주소
     "https://spartagames-git-dev-horanges-projects.vercel.app",
-    "https://spartagames-horanges-projects.vercel.app",
+    "https://sparta-games-fe.vercel.app",
 ]
 CORS_ALLOW_CREDENTIALS = True # 인증 정보 포함 설정
 
