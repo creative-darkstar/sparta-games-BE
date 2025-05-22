@@ -30,6 +30,7 @@ from games.models import (
     Game,
 )
 
+from spartagames.utils import std_response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated  # 로그인 인증토큰

@@ -10,6 +10,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from spartagames.utils import std_response
 from spartagames.pagination import CustomPagination
 
 from .serializers import MyGameListSerializer
@@ -32,17 +33,28 @@ class ProfileAPIView(APIView):
     # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
     NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
 
-    def get(self, request, user_pk):
-        user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    def get(self, request, user_id):
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+        except get_user_model().DoesNotExist:
+            return std_response(
+                message="회원정보가 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
         profile_image = user.image.url if user.image else ''
         categories = list(user.game_category.values_list('name', flat=True))
         if len(categories) > 3:
-            return Response(
-                {"error_message": "선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요."},
-                status=status.HTTP_400_BAD_REQUEST
+            return std_response(
+                message="선택한 관심 카테고리가 최대 개수를 초과했습니다. 다시 입력해주세요.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
-        return Response({
-            "user_pk": user_pk,
+        
+        data = {
+            "user_id": user_id,
             "email": user.email,
             "nickname": user.nickname,
             "login_type": user.login_type,
@@ -52,15 +64,33 @@ class ProfileAPIView(APIView):
             "introduce": user.introduce,
             "game_category": categories,
             "user_tech": user.user_tech
-        }, status=status.HTTP_200_OK)
+        }
+        return std_response(
+            data=data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
-    def put(self, request, user_pk):
+    def put(self, request, user_id):
         # check_password = self.request.data.get("password")
-        user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+        except get_user_model().DoesNotExist:
+            return std_response(
+                message="회원정보가 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
 
         # 현재 로그인한 유저와 수정 대상 회원이 일치하는지 확인
         if request.user.id != user.pk:
-            return Response(status=status.HTTP_403_FORBIDDEN)
+            return std_response(
+                message="권한이 없습니다",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
 
         # # 유저 비밀번호가 일치하지 않으면
         # if user.check_password(check_password) is False:
@@ -76,14 +106,18 @@ class ProfileAPIView(APIView):
             pass
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
         elif not self.NICKNAME_PATTERN.match(nickname):
-            return Response(
-                {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."},
-                status=status.HTTP_400_BAD_REQUEST
+            return std_response(
+                message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         elif get_user_model().objects.filter(nickname=nickname).exists():
-            return Response(
-                {"error_message": "이미 존재하는 nickname입니다."},
-                status=status.HTTP_400_BAD_REQUEST
+            return std_response(
+                message="이미 존재하는 nickname입니다.",
+                status="fail",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
             )
         
         # 관심 게임 카테고리
@@ -92,13 +126,15 @@ class ProfileAPIView(APIView):
         if categories:
             game_categories = GameCategory.objects.filter(name__in=categories)
             if not game_categories.exists():
-                return Response(
-                    {"error_message": "올바른 game category를 입력해주세요."},
-                    status=status.HTTP_400_BAD_REQUEST
+                return std_response(
+                    message="올바른 game category를 입력해주세요.",
+                    status="fail",
+                    error_code="SERVER_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             user.game_category.set(game_categories)
         else:
-            categories = list(user.game_category.values_list('pk', flat=True))
+            categories = list(user.game_category.values_list('id', flat=True))
         
         # 관심 기술분야
         user.user_tech = self.request.data.get('user_tech', user.user_tech)
@@ -141,30 +177,43 @@ class ProfileAPIView(APIView):
         # 변경한 데이터 저장
         user.save()
 
-        categories = list(user.game_category.values_list('pk', flat=True))
-        return Response(
-            {
-                "message": "회원 정보 수정 완료",
-                "data": {
-                    "nickname": user.nickname,
-                    "profile_image": user.image.url if user.image else "이미지 없음",
-                    "is_staff": user.is_staff,
-                    "is_maker": user.is_maker,
-                    "introduce": user.introduce,
-                    "game_category": categories,
-                    "user_tech": user.user_tech
-                }
-            },
-            status=status.HTTP_202_ACCEPTED
+        categories = list(user.game_category.values_list('id', flat=True))
+        data = {
+            "nickname": user.nickname,
+            "profile_image": user.image.url if user.image else "이미지 없음",
+            "is_staff": user.is_staff,
+            "is_maker": user.is_maker,
+            "introduce": user.introduce,
+            "game_category": categories,
+            "user_tech": user.user_tech
+        }
+        return std_response(
+            message="회원 정보 수정 완료",
+            data=data,
+            status="success",
+            status_code=status.HTTP_202_ACCEPTED
         )
 
-    def delete(self, request, user_pk):
+    def delete(self, request, user_id):
         # check_password = self.request.data.get("password")
-        user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
-
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+        except get_user_model().DoesNotExist:
+            return std_response(
+                message="회원정보가 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        
         # 현재 로그인한 유저와 탈퇴 대상 회원이 일치하는지 확인
         if request.user.id != user.pk:
-            return Response(status=status.HTTP_403_FORBIDDEN)
+            return std_response(
+                message="권한이 없습니다",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
 
         user.is_active = False
         user.save()
@@ -172,18 +221,21 @@ class ProfileAPIView(APIView):
         # 회원 탈퇴(임시) 리스트에 데이터 추가
         DeleteUsers.objects.create(user=user)
         
-        return Response(
-            {
-                "message": f"회원 탈퇴 완료 (회원 아이디: {user.nickname})"
-            },
-            status=status.HTTP_200_OK
+        return std_response(
+            message=f"회원 탈퇴 완료 (회원 아이디: {user.nickname})",
+            status="success",
+            status_code=status.HTTP_200_OK
         )
 
 
 @api_view(["GET"])
 def user_tech_list(request):
     techs = get_user_model().USER_TECH_CHOICES
-    return Response(techs, status=status.HTTP_200_OK)
+    return std_response(
+        data=techs,
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 @api_view(["GET"])
@@ -196,33 +248,48 @@ def check_nickname(request):
         
     # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
     if not NICKNAME_PATTERN.match(nickname):
-        return Response(
-            {"error_message": "올바른 nickname을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     elif get_user_model().objects.filter(nickname=nickname).exists():
-        return Response(
-            {"error_message": "이미 존재하는 nickname입니다."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="이미 존재하는 nickname입니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     else:
-        return Response(
-            {"message": "사용 가능한 닉네임입니다."},
-            status=status.HTTP_200_OK
+        return std_response(
+            message="사용 가능한 닉네임입니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
         )
 
 
 @api_view(["PUT"])
-def change_password(request, user_pk):
+def change_password(request, user_id):
     # 유효성 검사 정규식 패턴
     PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
 
-    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     # 로그인 타입 확인
     if user.login_type != "DEFAULT":
-        return Response(
-            {"error_message": "비밀번호 변경은 일반 로그인(DEFAULT) 사용자만 가능합니다."},
-            status=status.HTTP_403_FORBIDDEN
+        return std_response(
+            message="비밀번호 변경은 일반 로그인(DEFAULT) 사용자만 가능합니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
         )
 
     check_password = request.data.get("password")
@@ -231,41 +298,53 @@ def change_password(request, user_pk):
 
     # 현재 로그인한 유저와 비밀번호 수정 대상 회원이 일치하는지 확인
     if request.user.id != user.pk:
-        return Response(status=status.HTTP_403_FORBIDDEN)
+        return std_response(
+            message="권한이 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
 
     # 유저 비밀번호가 일치하지 않으면
     if user.check_password(check_password) is False:
-        return Response(
-            {"message": "비밀번호가 일치하지 않습니다."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="비밀번호가 일치하지 않습니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
 
     if check_password == new_password:
-        return Response(
-            {"message": "현재 비밀번호와 동일합니다."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="현재 비밀번호와 동일합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
 
     # new password 유효성 검사
     if not PASSWORD_PATTERN.match(new_password):
-        return Response(
-            {"error_message": "올바른 password와 password_check를 입력해주세요."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="올바른 password, password_check를 입력해주세요.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     elif not new_password == new_password_check:
-        return Response(
-            {"error_message": "동일한 password와 password_check를 입력해주세요."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="동일한 password와 password_check를 입력해주세요.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
 
     # 유저 비밀번호가 일치한다면
     user.set_password(new_password)
     user.save()
-    return Response(
-        {
-            "message": f"비밀번호 수정 완료 (회원 아이디: {user.nickname})"
-        },
-        status=status.HTTP_202_ACCEPTED
+    return std_response(
+        message=f"비밀번호 수정 완료 (회원 아이디: {user.nickname})",
+        status="success",
+        status_code=status.HTTP_202_ACCEPTED
     )
 
 
@@ -277,15 +356,34 @@ def password_verify_code(request):
     try:
         verification = EmailVerification.objects.get(email=email)
     except EmailVerification.DoesNotExist:
-        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"유효하지 않은 이메일입니다.",
+            status="error",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.is_expired():
-        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="인증 번호가 만료되었습니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.verification_code == code:
-        return Response({'message': '이메일 인증이 완료되었습니다.'}, status=status.HTTP_200_OK)
+        return std_response(
+            message=f"이메일 인증이 완료되었습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
     else:
-        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="잘못된 인증 번호입니다",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 @api_view(["PUT"])
@@ -301,29 +399,53 @@ def reset_password(request):
     user = get_user_model().objects.get(email=email)
     
     if user.login_type != "DEFAULT":
-        return Response({'error': '소셜 로그인 사용자는 비밀번호를 변경할 수 없습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="비밀번호 변경은 일반 로그인(DEFAULT) 사용자만 가능합니다. 소셜 로그인 사용자는 비밀번호를 변경할 수 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
 
     try:
         verification = EmailVerification.objects.get(email=email)
     except EmailVerification.DoesNotExist:
-        return Response({'error': '유효하지 않은 이메일입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message=f"유효하지 않은 이메일입니다.",
+            status="error",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.is_expired():
-        return Response({'error': '인증 번호가 만료되었습니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="인증 번호가 만료되었습니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
     if verification.verification_code != code:
-        return Response({'error': '잘못된 인증 번호입니다.'}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="잘못된 인증 번호입니다",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     
     # new password 유효성 검사
     if not PASSWORD_PATTERN.match(new_password):
-        return Response(
-            {"error_message": "올바른 password와 password_check를 입력해주세요."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="올바른 password, password_check를 입력해주세요.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
     elif not new_password == new_password_check:
-        return Response(
-            {"error_message": "동일한 password와 password_check를 입력해주세요."},
-            status=status.HTTP_400_BAD_REQUEST
+        return std_response(
+            message="동일한 password와 password_check를 입력해주세요.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
         )
 
     user.set_password(new_password)
@@ -331,22 +453,31 @@ def reset_password(request):
     # 기존 이메일 인증 데이터 삭제
     EmailVerification.objects.filter(email=email).delete()
     
-    return Response(
-        {
-            "message": f"비밀번호 수정 완료 (회원 아이디: {user.nickname})"
-        },
-        status=status.HTTP_202_ACCEPTED
+    return std_response(
+        message=f"비밀번호 수정 완료 (회원 아이디: {user.nickname})",
+        status="success",
+        status_code=status.HTTP_202_ACCEPTED
     )
 
 
 @api_view(["GET"])
-def my_games(request, user_pk):
-    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+def my_games(request, user_id):
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     my_games = user.games.filter(is_visible=True).order_by('-created_at')
     if not my_games.exists():
-        return Response(
-            {"message": f"{request.user}가 제작한 게임이 없습니다."},
-            status=status.HTTP_404_NOT_FOUND  # Not Found
+        return std_response(
+            message=f"{request.user}가 제작한 게임이 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
         )
 
     # 대상 일치 여부 확인
@@ -359,9 +490,19 @@ def my_games(request, user_pk):
     
     # 시리얼라이저 적용
     serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user})
+    data = paginator.get_paginated_response(serializer.data).data
     
     # 리턴
-    return paginator.get_paginated_response(serializer.data)
+    return std_response(
+        data=data["results"],
+        status="success",
+        pagination={
+            "count": data["count"],
+            "next": data["next"],
+            "previous": data["previous"]
+        },
+        status_code=status.HTTP_200_OK
+    )
     
     # item_list = list()
     # for item in my_games:
@@ -387,13 +528,23 @@ def my_games(request, user_pk):
 
 
 @api_view(["GET"])
-def like_games(request, user_pk):
-    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+def like_games(request, user_id):
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
-        return Response(
-            {},
-            status=status.HTTP_204_NO_CONTENT  # Not Found
+        return std_response(
+            data={},
+            message=f"{request.user}가 즐겨찾기한 게임이 없습니다.",
+            status="success",
+            status_code=status.HTTP_204_NO_CONTENT
         )
 
     # 페이지네이션 적용
@@ -402,9 +553,19 @@ def like_games(request, user_pk):
     
     # 시리얼라이저 적용
     serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
+    data = paginator.get_paginated_response(serializer.data).data
     
     # 리턴
-    return paginator.get_paginated_response(serializer.data)
+    return std_response(
+        data=data["results"],
+        status="success",
+        pagination={
+            "count": data["count"],
+            "next": data["next"],
+            "previous": data["previous"]
+        },
+        status_code=status.HTTP_200_OK
+    )
     
     # item_list = list()
     # for item in like_games:
@@ -437,11 +598,24 @@ def like_games(request, user_pk):
 # 2024-12-23 유저 페이지 게임팩 API 삭제
 # 2024-12-30 유저 페이지 게임팩 API 복구
 @api_view(["GET"])
-def gamepacks(request, user_pk):
-    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+def gamepacks(request, user_id):
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     # 대상 일치 여부 확인
     if user != request.user:
-        return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_401_UNAUTHORIZED)
+        return std_response(
+            message="유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     
     # 게임팩 세팅
     # 1. 즐겨찾기한 게임
@@ -464,19 +638,40 @@ def gamepacks(request, user_pk):
     # 리턴
     if combined_games:
         serializer = GameListSerializer(combined_games, many=True, context={'user': user})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return std_response(
+            data=serializer.data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
     else:
         latest_games=list(Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at')[:4])
         serializer = GameListSerializer(latest_games, many=True, context={'user': user})
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        return std_response(
+            data=serializer.data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 @api_view(["GET"])
-def recently_played_games(request, user_pk):
-    user = get_object_or_404(get_user_model(), pk=user_pk, is_active=True)
+def recently_played_games(request, user_id):
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     # 대상 일치 여부 확인
     if user != request.user:
-        return Response({"message": "유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다."}, status=status.HTTP_200_OK)
+        return std_response(
+            message="유저 본인의 유저 페이지가 아니므로 데이터를 불러올 수 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     
     # 최근 플레이한 게임
     recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
@@ -487,9 +682,24 @@ def recently_played_games(request, user_pk):
         paginator = CustomPagination()
         paginated_data = paginator.paginate_queryset(recently_played_games, request)
         serializer = GameListSerializer(paginated_data, many=True, context={'user': user})
-        return paginator.get_paginated_response(serializer.data)
+        data = paginator.get_paginated_response(serializer.data).data
+        return std_response(
+            data=data["results"],
+            status="success",
+            pagination={
+                "count": data["count"],
+                "next": data["next"],
+                "previous": data["previous"]
+            },
+            status_code=status.HTTP_200_OK
+        )
     else:
-        return Response({"message": "최근 플레이한 게임이 존재하지 않습니다."}, status=status.HTTP_200_OK)
+        return std_response(
+            data={},
+            message="최근 플레이한 게임이 존재하지 않습니다.",
+            status="success",
+            status_code=status.HTTP_204_NO_CONTENT
+        )
 
 
 # ---------- Web---------- #
