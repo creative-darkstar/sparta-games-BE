@@ -31,7 +31,8 @@ class ProfileAPIView(APIView):
     # 유효성 검사 정규식 패턴
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
     # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
+    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
+    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
 
     def get(self, request, user_id):
         try:
@@ -107,7 +108,7 @@ class ProfileAPIView(APIView):
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
         elif not self.NICKNAME_PATTERN.match(nickname):
             return std_response(
-                message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+                message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
@@ -242,14 +243,15 @@ def user_tech_list(request):
 def check_nickname(request):
     # 유효성 검사 정규식 패턴
     # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
+    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
+    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
 
     nickname = request.data.get('nickname', None)
         
     # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
     if not NICKNAME_PATTERN.match(nickname):
         return std_response(
-            message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+            message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
             status="fail",
             error_code="CLIENT_FAIL",
             status_code=status.HTTP_400_BAD_REQUEST
@@ -272,7 +274,9 @@ def check_nickname(request):
 @api_view(["PUT"])
 def change_password(request, user_id):
     # 유효성 검사 정규식 패턴
-    PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
+    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
+    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
+    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
 
     try:
         user = get_user_model().objects.get(pk=user_id, is_active=True)
@@ -389,7 +393,9 @@ def password_verify_code(request):
 @api_view(["PUT"])
 def reset_password(request):
     # 유효성 검사 정규식 패턴
-    PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
+    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
+    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
+    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
     
     email = request.data.get("email")
     code = request.data.get('code')
