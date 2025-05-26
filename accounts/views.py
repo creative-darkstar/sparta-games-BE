@@ -152,7 +152,7 @@ class SignUpAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        elif get_user_model().objects.filter(email=email).exists():
+        if get_user_model().objects.filter(email=email).exists():
             return std_response(
                 message="이미 존재하는 email입니다.",
                 status="fail",
