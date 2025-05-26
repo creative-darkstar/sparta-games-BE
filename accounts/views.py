@@ -102,8 +102,11 @@ class CustomLoginAPIView(TokenObtainPairView):
 class SignUpAPIView(APIView):
     EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
     # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,10}$")
-    PASSWORD_PATTERN = re.compile(r'^(?=.*\d)(?=.*[a-z])(?=.*[A-Z])(?=.*[a-zA-Z]).{8,32}$')
+    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
+    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
+    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
+    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
+    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
 
     def post(self, request):
         email = request.data.get("email")
@@ -149,7 +152,7 @@ class SignUpAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        elif get_user_model().objects.filter(email=email).exists():
+        if get_user_model().objects.filter(email=email).exists():
             return std_response(
                 message="이미 존재하는 email입니다.",
                 status="fail",
@@ -165,16 +168,16 @@ class SignUpAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        elif len(nickname) > 30 or len(nickname) < 4:
+        elif len(nickname) > 12 or len(nickname) < 4:
             return std_response(
-                message="닉네임은 4자 이상 10자 이하만 가능합니다.",
+                message="닉네임은 4자 이상 12자 이하만 가능합니다.",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         elif not self.NICKNAME_PATTERN.match(nickname):
             return std_response(
-                message="올바른 닉네임을 입력해주세요. 4자 이상 10자 이하의 한영숫자입니다.",
+                message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
