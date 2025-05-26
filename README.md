@@ -7,10 +7,9 @@
 Unity를 사용하여 게임을 제작하고 WebGL로 빌드하여 이를 업로드 및 관리할 수 있는 사이트
 
 - 누구나 게임을 플레이할 수 있습니다.
-- 게임은 태그별, 조회수순, 평점순, 최신순으로 찾을 수 있습니다.
+- 게임은 카테고리 별로 분류하여 찾을 수 있고, 정렬은 조회수순, 평점순, 최신순으로 할 수 있습니다.
 - 게임을 업로드할 땐, 로그인이 필요합니다.
-- 게임태그를 추천하는 AI기능이 있습니다.
-- 회원탈퇴는 문의를 남겨주세요.
+- 회원탈퇴 후 회원 정보 삭제는 탈퇴일시로부터 24시간 뒤에 자동으로 완료됩니다.
   
 <br>
 
@@ -18,16 +17,27 @@ Unity를 사용하여 게임을 제작하고 WebGL로 빌드하여 이를 업로
 
 
 <br>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/4371f261-e4a6-4c95-bba1-66325dc031ce" height="540px" style="vertical-align: middle; margin-right: 20px;">
+  <img src="https://github.com/user-attachments/assets/67dd59c2-02f9-4416-bc82-2022150324cf" height="540px" style="vertical-align: middle;">
+</p>
+
 
 ## GamePlayPage
 
 
 <br>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/35fc4d69-21c8-4b06-8a73-c16685067b6a" height="540px" style="vertical-align: middle;">
+</p>
 
 ## MyPage
 
 
 <br>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/86c85721-b189-4edd-8de9-f25517bcf816" height="540px" style="vertical-align: middle;">
+</p>
 
 ### Reference
 
@@ -60,64 +70,16 @@ Unity를 사용하여 게임을 제작하고 WebGL로 빌드하여 이를 업로
 
 <br>
 
+![Image](https://github.com/user-attachments/assets/6fec5135-ea4f-4993-869d-40f57d6cd0ca)
+
+
 ## Service Architecture
 
 <br>
 
-## API 명세
+## API Docs
 
-- Accounts
-
-| Method                                 | Authorization | endpoint                     | Success | Fail       | Description   |
-|----------------------------------------|---------------|------------------------------|---------|------------|---------------|
-| <span style="color:yellow">POST</span> | `Anonymous`     | `/accounts/api/signup/` | 201,회원가입 성공       | 400,잘못된 사항 | 회원가입          |
-| <span style="color:yellow">POST</span> | `Anonymous`     | `/accounts/api/login/` |    202,로그인 성공    |     401,Unauthorized       | 로그인           |
-| <span style="color:yellow">POST</span> | `User`     | `/accounts/api/refresh/` |    200,OK     |    401,Unauthorized        | Refresh Token |
-| <span style="color:yellow">POST</span>   | `User`     | `/accounts/api/logout/` |    200,로그아웃 완료    |     403, 로그아웃 실패       | 로그아웃          |
-
-- Games
-
-| Method                                 | Authorization | endpoint                      | Success                | Fail                           | Description      |
-|----------------------------------------|---------------|-------------------------------|------------------------|--------------------------------|------------------|
-| <span style="color:green">GET</span>   | `Anonymous`   | `/games/api/list/` | 200, 게임 리스트            | 404, 목록X                       | 게임 목록            |
-| <span style="color:green">GET</span>   | `Anonymous`   | `/games/api/list/<int:game_pk>/` | 200, 게임 상세 정보          | 404, 목록X                       | 게임 상세페이지 / 댓글 조회 |
-| <span style="color:yellow">POST</span> | `User`        | `/games/api/list/`              | 201, 게임 상세 정보          | 403 (회원이 아닙니다), 400 (필요한 정보)   | 게임 생성            |
-| <span style="color:yellow">POST</span> | `Admin`       | `/games/api/list/<int:game_pk>/register/`          | 200, game_id, gamepath | 403 (권한이 없습니다)                 | 게임 등록            |
-| <span style="color:yellow">POST</span> | `Admin`       | `/games/api/list/<int:game_pk>/deny/` | 200                    | 403 (권한이 없습니다)                 | 게임 등록 거부         |
-| <span style="color:yellow">POST</span> | `Admin`       | `/games/api/list/<int:game_pk>/dzip/` | 200, 게임 zip 파일         | 403 (권한이 없습니다)                 | 게임 파일 다운         |
-| <span style="color:skyblue">PUT</span> | `User`        | `/games/api/list/<int:game_pk>/` | 200, 게임 상세 정보          | 403 (작성자가 아닙니다)                | 게임 수정            |
-| <span style="color:red">DELETE</span>  | `User`        | `/games/api/list/<int:game_pk>/` | 204, 삭제완료              | 403 (작성자가 아닙니다)                | 게임 삭제            |
-| <span style="color:yellow">POST</span> | `User`        | `/games/api/list/<int:game_pk>/like/` | 200, like 정보           | 403 (회원이 아닙니다)                 | 게임 즐겨찾기          |
-| <span style="color:yellow">POST</span> | `User`        | `/games/api/list/<int:game_pk>/star/` | 200, 별점 정보             | 403 (회원이 아닙니다)                 | 게임 별점 매기기        |
-| <span style="color:yellow">POST</span> | `User`        | `/games/api/list/<int:game_pk>/comments/` | 200, 댓글 정보             | 403 (회원이 아닙니다), 400 (필요한것이있습니다) | 댓글 작성            |
-| <span style="color:skyblue">PUT</span> | `User`        | `/games/api/comment/<int:comment:_id>/` | 201, 댓글 정보             | 403(작성자가 아닙니다)                 | 댓글 수정            |
-| <span style="color:red">DELETE</span>  | `User`        | `/games/api/comment/<int:comment:_id>/` | 204, 삭제 완료             | 403(작성자가 아닙니다)                 | 댓글 삭제            |
-| <span style="color:green">GET</span>   | `Admin`       | `/games/api/tags` | 200                    | 403(권한이 없습니다)                  | 태그 조회            |
-| <span style="color:yellow">POST</span> | `Admin`        | `/games/api/tags` | 200                    | 403(권한이 없습니다)                  | 태그 생성            |
-| <span style="color:red">DELETE</span>  | `Admin`        | `/games/api/tags` | 200                    | 403(권한이 없습니다)                  | 태그 삭제            |
-
-- Users
-
-| Method                                 | Authorization | endpoint                     | Success | Fail                          | Description       |
-|----------------------------------------|---------------|------------------------------|---------|-------------------------------|-------------------|
-| <span style="color:red">DELETE</span>  | `User`        | `/user/api/<int:user_pk>/` | 200,탈퇴 완료                   | 403 (회원이 아닙니다), 400 (비밀번호 틀림) | 회원 탈퇴             |
-| <span style="color:skyblue">PUT</span> | `User`        | `/user/api/<int:user_pk>/password/` | 202,수정 완료          | 403 (회원이 아닙니다), 400 (비밀번호 틀림) | 패스워드 수정           |
-| <span style="color:skyblue">PUT</span> | `User`        | `/user/api/<int:user_pk>/` | 202, 수정 완료          | 403 (회원이 아닙니다), 400 (비밀번호 틀림) | 프로필 수정 (이메일, 이미지) |
-| <span style="color:green">GET</span>   | `Anonymous`   | `/user/api/<int:user_pk>/` | 200, 정보            | 404 목록X                       | 프로필 조회            |
-| <span style="color:green">GET</span>   | `Anonymous`   | `/user/api/<int:user_pk>/games/` | 200, 정보            | 404 목록X                       | 내가 등록한 게임 목록      |
-| <span style="color:green">GET</span>   | `User`   | `/user/api/<int:user_pk>/likes/` | 200, 정보            | 404 목록X                       | 내가 즐겨찾기한 게임 목록    |
-
-- Qnas
-
-| Method                                 | Authorization | endpoint                     | Success     | Fail                            | Description  |
-|----------------------------------------|---------------|------------------------------|-------------|---------------------------------|--------------|
-| <span style="color:green">GET</span>   | `Anonymous`   | `/qnas/api/post/` | 200, 리스트    | 404 (목록X)                       | QnA 목록 조회    |
-| <span style="color:yellow">POST</span> | `Admin`        | `/qnas/api/post/` | 201, 문의내용   | 403 (회원이 아닙니다), 400 (필요한것이있습니다) | QnA 작성       |
-| <span style="color:green">GET</span>   | `Anonymous`   | `/qnas/api/post/<int:post_pk>/` | 200, 리스트 상세 | 404 (목록 X)                      | QnA 상세페이지 조회 |
-| <span style="color:skyblue">PUT</span> | `Admin`        | `/qnas/api/post/<int:post_pk>/` | 201, 문의 내용  | 403 (회원이 아닙니다), 400 (필요한 정보)    | QnA 수정       |
-| <span style="color:red">DELETE</span>  | `Admin`        | `/qnas/api/post/<int:post_pk>/` | 204, 삭제 완료  | 404(목록X)  | QnA 삭제       |
-
-
+<br>
 
 ## 역할 분담
 
