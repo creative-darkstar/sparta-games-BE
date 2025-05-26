@@ -7,17 +7,17 @@ from . import views
 urlpatterns = [
     # ---------- API---------- #
     path("api/qna/", views.QnAPostListAPIView.as_view(), name="qna_list"),
-    path("api/qna/<int:qna_pk>/", views.QnADetailAPIView.as_view(), name="qna_detail"),
+    path("api/qna/<int:qna_id>/", views.QnADetailAPIView.as_view(), name="qna_detail"),
     path('api/qna/categories/', views.CategoryListView.as_view(), name='category_list'),
 
     # 2025-01-03 관리자 페이지에 있을 기능을 games -> qnas 로 이관
     path("api/admin/stats/", views.get_stats, name="game_stats"),
     path("api/admin/list/", views.game_register_list, name="game_register_list"),
-    path("api/admin/list/<int:game_pk>/", views.game_register_logs_all, name="game_register_logs_all"),
-    path("api/list/<int:game_pk>/register/", views.game_register, name="game_register"),
-    path("api/list/<int:game_pk>/deny/", views.game_register_deny, name="game_register_deny"),
-    path("api/denylog/<int:game_pk>/", views.deny_log, name="deny_log"),
-    path('api/list/<int:game_pk>/dzip/', views.game_dzip, name='game_dzip'),
+    path("api/admin/list/<int:game_id>/", views.game_register_logs_all, name="game_register_logs_all"),
+    path("api/list/<int:game_id>/register/", views.game_register, name="game_register"),
+    path("api/list/<int:game_id>/deny/", views.game_register_deny, name="game_register_deny"),
+    path("api/denylog/<int:game_id>/", views.deny_log, name="deny_log"),
+    path('api/list/<int:game_id>/dzip/', views.game_dzip, name='game_dzip'),
     # 작업예정
     # path('api/admin/makers/', views.maker_list, name='maker_list'),
     
