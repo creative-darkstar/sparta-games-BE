@@ -29,6 +29,7 @@ from rest_framework.permissions import IsAuthenticated  # 로그인 인증토큰
 
 
 # ---------- API---------- #
+# Deprecated
 class QnAPostListAPIView(APIView):
     """
     포스트일 때 로그인 인증을 위한 함수
@@ -72,6 +73,7 @@ class QnAPostListAPIView(APIView):
             return Response(serializer.data, status=status.HTTP_200_OK)
 
 
+# Deprecated
 class QnADetailAPIView(APIView):
     """
     포스트일 때 로그인 인증을 위한 함수
@@ -85,15 +87,15 @@ class QnADetailAPIView(APIView):
 
         return permissions
 
-    def get_object(self, qna_pk):
-        return get_object_or_404(QnA, pk=qna_pk, is_visible=True)
+    def get_object(self, qna_id):
+        return get_object_or_404(QnA, pk=qna_id, is_visible=True)
 
     """
     QnA 상세 조회
     """
 
-    def get(self, request, qna_pk):
-        qna = self.get_object(qna_pk)
+    def get(self, request, qna_id):
+        qna = self.get_object(qna_id)
         serializer = QnAPostListSerializer(qna)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -101,10 +103,10 @@ class QnADetailAPIView(APIView):
     QnA 수정
     """
 
-    def put(self, request, qna_pk):
+    def put(self, request, qna_id):
         if request.user.is_staff == False:
             return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
-        qna = self.get_object(qna_pk)
+        qna = self.get_object(qna_id)
         serializer = QnAPostListSerializer(
             qna, data=request.data, partial=True)
         if serializer.is_valid(raise_exception=True):
@@ -115,15 +117,16 @@ class QnADetailAPIView(APIView):
     QnA 삭제
     """
 
-    def delete(self, request, qna_pk):
+    def delete(self, request, qna_id):
         if request.user.is_staff == False:
             return Response({"error": "권한이 없습니다"}, status=status.HTTP_400_BAD_REQUEST)
-        qna = self.get_object(qna_pk)
+        qna = self.get_object(qna_id)
         qna.is_visible = False
         qna.save()
         return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
 
 
+# Deprecated
 class CategoryListView(APIView):
     def get(self, request):
         categories = QnA.CATEGORY_CHOICES
@@ -133,13 +136,19 @@ class CategoryListView(APIView):
 
 
 # 2025-01-03 관리자 페이지에 있을 기능을 games -> qnas 로 이관
+# 2025-05-24 std_response()로 응답 구조 통일하면서 기존에 쓰던 permission_classes 데코레이터 커스텀 필요 -> 임시로 주석 처리
 
 # 관리자용 게임 통계
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+# @permission_classes([IsAuthenticated])
 def get_stats(request):
-    if (request.user.is_staff == False) or (request.user.is_superuser == False):
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     
     rows = Game.objects.filter(is_visible=True)
 
@@ -150,16 +159,24 @@ def get_stats(request):
         "state_deny": rows.filter(register_state=2).count(),
     }
     
-    return Response(data, status=status.HTTP_200_OK)
-
+    return std_response(
+        data=data,
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 # 관리자용 게임 등록 리스트
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+# @permission_classes([IsAuthenticated])
 def game_register_list(request):
-    if (request.user.is_staff == False) or (request.user.is_superuser == False):
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     
     # 누적 조건 필터링을 위한 Q 객체 초기화
     query = Q(is_visible=True)
@@ -184,42 +201,67 @@ def game_register_list(request):
     paginator = GameRegisterListPagination()
     result = paginator.paginate_queryset(rows, request)
     serializer = GameRegisterListSerializer(result, many=True)
-
-    # 응답 데이터 구성
-    response_data = {
-        "game_register_list": serializer.data,
-    }
     
-    return paginator.get_paginated_response(response_data)
+    # 응답 데이터 구성
+    data = paginator.get_paginated_response(serializer.data).data
+
+    return std_response(
+        data=data["results"],
+        status="success",
+        pagination={
+            "count":data["count"],
+            "next":data["next"],
+            "previous":data["previous"]
+        },
+        status_code=status.HTTP_200_OK
+    )
 
 
 # 관리자용 게임 등록 로그 전체
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def game_register_logs_all(request, game_pk):
-    if (request.user.is_staff == False) or (request.user.is_superuser == False):
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+# @permission_classes([IsAuthenticated])
+def game_register_logs_all(request, game_id):
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     
-    rows = GameRegisterLog.objects.filter(game__pk=game_pk).order_by("-created_at")
+    rows = GameRegisterLog.objects.filter(game__pk=game_id).order_by("-created_at")
     
     # 응답 데이터 구성
-    data = {
-        "results": [{"created_at": log.created_at, "content": log.content} for log in rows]
-    }
+    data = [{"created_at": log.created_at, "content": log.content} for log in rows]
     
-    return Response(data, status=status.HTTP_200_OK)
+    return std_response(
+        data=data,
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def game_register(request, game_pk):
+# @permission_classes([IsAuthenticated])
+def game_register(request, game_id):
     # 관리자 여부 확인
-    if request.user.is_staff is False:
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
 
-    # game_pk에 해당하는 row 가져오기 (게시 중인 상태이면서 '등록 중' 상태)
-    row = get_object_or_404(
-        Game, pk=game_pk, is_visible=True, register_state=0)
+    # game_id에 해당하는 row 가져오기 (게시 중인 상태이면서 '등록 중' 상태)
+    try:
+        row = Game.objects.get(pk=game_id, is_visible=True, register_state=0)
+    except Game.DoesNotExist:
+        return std_response(
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
 
     # gamefile 필드에 저장한 경로값을 'path' 변수에 저장
     path = row.gamefile.url
@@ -305,7 +347,7 @@ def game_register(request, game_pk):
     row.save()
 
     # 알맞은 HTTP Response 리턴
-    # return Response({"message": f"등록을 성공했습니다. (게시물 id: {game_pk})"}, status=status.HTTP_200_OK)
+    # return Response({"message": f"등록을 성공했습니다. (게시물 id: {game_id})"}, status=status.HTTP_200_OK)
 
     # 게임 등록 로그에 데이터 추가
     row.logs_game.create(
@@ -317,22 +359,37 @@ def game_register(request, game_pk):
     
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     # return redirect("games:admin_list")
-    return Response({"message": "게임이 등록되었습니다."}, status=status.HTTP_200_OK)
+    return std_response(
+        message="게임이 등록되었습니다.",
+        status="success",
+        status_code=status.HTTP_202_ACCEPTED
+    )
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def game_register_deny(request, game_pk):
+# @permission_classes([IsAuthenticated])
+def game_register_deny(request, game_id):
     # 관리자 여부 확인
-    if request.user.is_staff is False:
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
     # # 등록 거부 사유 없을 시 400 (추후 추가)
     # if request.data.get("content", None) is None:
     #     return Response({"error": "반려 사유가 필요합니다."}, status=status.HTTP_400_BAD_REQUEST)
 
     # 게임 정보 수정
-    game = get_object_or_404(
-        Game, pk=game_pk, is_visible=True, register_state=0)
+    try:
+        game = Game.objects.get(pk=game_id, is_visible=True, register_state=0)
+    except Game.DoesNotExist:
+        return std_response(
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     game.register_state = 2
     game.save()
     
@@ -346,18 +403,34 @@ def game_register_deny(request, game_pk):
 
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     # return redirect("games:admin_list")
-    return Response({"message": "게임 등록을 거부했습니다."}, status=status.HTTP_200_OK)
+    return std_response(
+        message="게임 등록을 거부했습니다.",
+        status="success",
+        status_code=status.HTTP_202_ACCEPTED
+    )
 
 
+# FileResponse 이므로 std_response로 변경하지 않음
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
-def game_dzip(request, game_pk):
+# @permission_classes([IsAuthenticated])
+def game_dzip(request, game_id):
     # 관리자 여부 확인
-    if request.user.is_staff is False:
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+    if request.user.is_staff == False:
+        return std_response(
+            message="관리자 권한이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
 
-    row = get_object_or_404(
-        Game, pk=game_pk, register_state=0, is_visible=True)
+    try:
+        row = Game.objects.get(pk=game_id, is_visible=True, register_state=0)
+    except Game.DoesNotExist:
+        return std_response(
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     zip_path = row.gamefile.url
     zip_folder_path = "./media/zips/"
     zip_name = os.path.basename(zip_path)
@@ -384,27 +457,42 @@ def game_dzip(request, game_pk):
 
 # 게임 등록 거부 사유 불러오는 API
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
-def deny_log(request, game_pk):
+# @permission_classes([IsAuthenticated])
+def deny_log(request, game_id):
     # 등록 거부된 게임 정보 불러오기
-    game = get_object_or_404(
-        Game, pk=game_pk, is_visible=True, register_state=2)
+    try:
+        game = Game.objects.get(pk=game_id, is_visible=True, register_state=2)
+    except Game.DoesNotExist:
+        return std_response(
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
     
     # 관리자, 메이커 여부 확인
     if not (request.user.is_staff is True or request.user == game.maker):
-        return Response({"error": "관리자 권한이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+        return std_response(
+            message="권한이 없습니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_403_FORBIDDEN
+        )
 
     # 로그 불러오기
     rows = GameRegisterLog.objects.filter(game=game)
     if not rows.exists():
-        return Response({"error": "등록 거부된 적이 없는 게임입니다."}, status=status.HTTP_400_BAD_REQUEST)
+        return std_response(
+            message="등록 거부된 적이 없는 게임입니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
     row = rows.order_by("-created_at").first()
 
-    return Response(
-        {
-            "content": row.content
-        },
-        status=status.HTTP_200_OK
+    return std_response(
+        data={"content": row.content},
+        status="success",
+        status_code=status.HTTP_200_OK
     )
 
 
