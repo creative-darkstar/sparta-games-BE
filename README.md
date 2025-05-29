@@ -81,6 +81,7 @@ Unity를 사용하여 게임을 제작하고 WebGL로 빌드하여 이를 업로
 
 ## API Docs
 
+자주 사용하는 앱에서 바로 AI를 사용해 보세요 … Gemini를 사용하여 초안을 생성하고 콘텐츠를 다듬고, 1개월 동안 ₩29,000 ₩0에 Google의 차세대 AI가 지원되는 Gemini Pro를 이용하세요.
 <details>
 <summary>전체 목록</summary>
 
