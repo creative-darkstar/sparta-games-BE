@@ -1,0 +1,34 @@
+from rest_framework import serializers
+from .models import TeamBuildPost
+
+
+class TeamBuildPostSerializer(serializers.ModelSerializer):
+    status_chip = serializers.CharField(read_only=True)
+    author_data = serializers.SerializerMethodField(read_only=True)
+    want_roles = serializers.SerializerMethodField()
+    thumbnail = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TeamBuildPost
+        fields = (
+            'id', 'title', 'author_data', 'purpose',
+            'duration', 'deadline', 'is_visible',
+            'status_chip', 'want_roles', 'thumbnail',
+        )
+        read_only_fields = ['author_data', 'is_visible', 'create_dt', 'update_dt', 'status_chip']
+
+    def get_author_data(self, obj):
+        return {
+            "id": obj.author.id,
+            "nickname": obj.author.nickname,
+            "image": obj.author.image.url if obj.author.image else None,
+        }
+    
+    def get_want_roles(self, obj):
+        roles = obj.want_roles or []
+        if len(roles) <= 3:
+            return roles
+        return roles[:3] + [f"+{len(roles) - 3}"]
+    
+    def get_thumbnail(self, obj):
+        return obj.thumbnail.url if obj.thumbnail else None
