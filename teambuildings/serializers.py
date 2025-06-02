@@ -32,3 +32,23 @@ class TeamBuildPostSerializer(serializers.ModelSerializer):
     
     def get_thumbnail(self, obj):
         return obj.thumbnail.url if obj.thumbnail else None
+    
+class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
+    author_data = serializers.SerializerMethodField(read_only=True)
+    thumbnail = serializers.ImageField(use_url=True)
+    
+    class Meta:
+        model = TeamBuildPost
+        fields = [
+            "id", "title", "want_roles", "purpose", "duration", "meeting_type",
+            "deadline", "contact", "content", "thumbnail", "author_data",
+            "create_dt"
+        ]
+        read_only_fields = ["id", "author_data", "create_dt"]
+
+    def get_author_data(self, obj):
+        return {
+            "id": obj.author.id,
+            "nickname": obj.author.nickname,
+            "image": obj.author.image.url if obj.author.image else None,
+        }

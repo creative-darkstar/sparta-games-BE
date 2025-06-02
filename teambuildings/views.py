@@ -9,7 +9,7 @@ from .models import TeamBuildPost, TeamBuildProfile
 from .models import ROLE_CHOICES, PURPOSE_CHOICES, DURATION_CHOICES,MEETING_TYPE_CHOICES
 from rest_framework import status
 from spartagames.utils import std_response
-from .serializers import TeamBuildPostSerializer
+from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer
 
 # Create your views here.
 class TeamBuildPostAPIView(APIView):
@@ -257,16 +257,51 @@ class TeamBuildPostAPIView(APIView):
 
 class TeamBuildPostDetailAPIView(APIView):
     """
-    API view to handle team building post detail retrieval and updates.
+    PUT, DELETE일 때 로그인 인증을 위한 함수
     """
+
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
+    
+    def get_object(self, post_id):
+        try:
+            return TeamBuildPost.objects.get(id=post_id, is_visible=True)
+        except TeamBuildPost.DoesNotExist:
+            return std_response(
+                message="해당 팀빌딩 게시글을 찾을 수 없습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+    
     def get(self, request, post_id):
-        # Logic to retrieve a specific team building post by post_id
-        pass
+        """
+        팀빌딩 게시글 상세조회 API
+        """
+        post= self.get_object(post_id)
+        if isinstance(post, dict):
+            return post
+        serilizer = TeamBuildPostDetailSerializer(post).data
+        return std_response(
+            data=serilizer,
+            message="팀빌딩 게시글 상세조회 성공하였습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
     def put(self, request, post_id):
-        # Logic to update a specific team building post by post_id
+        """
+        팀빌딩 게시글 수정 API
+        """
         pass
 
     def delete(self, request, post_id):
-        # Logic to delete a specific team building post by post_id
+        """
+        팀빌딩 게시글 삭제 API
+        """
         pass
