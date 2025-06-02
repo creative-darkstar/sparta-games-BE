@@ -453,4 +453,24 @@ class TeamBuildPostDetailAPIView(APIView):
         """
         팀빌딩 게시글 삭제 API
         """
-        pass
+        post= self.get_object(post_id)
+        if isinstance(post, dict):
+            return post
+        
+        # 권한 확인
+        if request.user != post.author and not request.user.is_staff:
+            return std_response(
+                message="작성자만 삭제할 수 있습니다.",
+                status="fail",
+                error_code="PERMISSION_DENIED",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+        
+        # 팀빌딩 게시글 소프트 삭제
+        post.is_visible = False
+        post.save()
+        return std_response(
+            message="팀빌딩 게시글이 삭제되었습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
