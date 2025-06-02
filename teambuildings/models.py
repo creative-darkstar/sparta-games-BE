@@ -2,7 +2,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
-from games.models import validate_text_content
+from games.models import validate_text_content, GameCategory
 
 
 PURPOSE_CHOICES = [
@@ -26,74 +26,37 @@ MEETING_TYPE_CHOICES = [
 ]
 
 
-ROLE_CHOICES = (
-    ("NONE", "관심분야 없음"),        # 관심분야 없음
-    ("ALL", "All"),                 # 전체
+# ROLE_CHOICES = (
+#     ("", "Need Update"),
+#     # 기획직군
+#     ("DIR", "Director"),                # 디렉터 (게임 개발 전반적인 부분에 관여하며 리드하는 포지션)
+#     ("PM", "Project Manager"),          # PM (게임 시스템,레벨,경제 등 요소들에 대한 기획)
 
-    # Director / Management
-    ("DIR", "Game Director"),       # 게임 디렉터
-    ("PM", "Project Manager"),      # 프로젝트 매니저
-    ("PO", "Product Owner"),        # 프로덕트 오너
+#     # 디자인직군
+#     ("A2D", "2D Artist"),               # 2D 아티스트 (컨셉/일러스트/UI 포함)
+#     ("A3D", "3D Artist"),               # 3D 아티스트 (모델링/애니메이션/VFX 포함)
+#     ("UXUI", "UXUI Designer"),          # UXUI 디자이너 (게임 사용성 및 내부 아이콘 등 요소 작업)
 
-    # Design
-    ("GDES", "Game Designer"),      # 게임 기획자
-    ("SYSD", "System Designer"),    # 시스템 기획자
-    ("LVLD", "Level Designer"),     # 레벨 디자이너
-    ("CONT", "Content Designer"),   # 콘텐츠 기획자
-    ("BAL", "Balance Designer"),    # 밸런스 기획자
-    ("ECON", "Economy Designer"),   # 경제 시스템 기획자
-    ("LOCA", "Localization Manager"), # 현지화 매니저
+#     # 개발
+#     ("CLNT", "Client Dev"),             # 클라이언트 개발자 (게임요소 직접 구현, 일반적으로 프론트엔드)
+#     ("ENG", "Engine Dev"),              # 원활한 게임이용을 위한 엔진 개발 및 구현
+#     ("SRVR", "Server / Network Dev"),   # 서버 및 네트워크 개발자 )일반적으로 백엔드 개발)
 
-    # Art
-    ("ADIR", "Art Director"),       # 아트 디렉터
-    ("CART", "Concept Artist"),     # 콘셉트 아티스트
-    ("2D", "2D Artist"),            # 2D 아티스트
-    ("3D", "3D Artist"),            # 3D 아티스트
-    ("MDLR", "3D Modeler"),         # 모델러
-    ("RIG", "Rigger"),              # 리거
-    ("ANIM", "Animator"),           # 애니메이터
-    ("TEX", "Texture Artist"),      # 텍스처 아티스트
-    ("LIGH", "Lighting Artist"),    # 라이팅 아티스트
-    ("ENV", "Environment Artist"),  # 배경 아티스트
-    ("VFX", "VFX Artist"),          # 이펙트 아티스트
-    ("UIUX", "UI/UX Designer"),     # UI/UX 디자이너
+#     # 기타직군
+#     ("AUD", "Sound / Audio"),           # 사운드 엔지니어 (게임 음악 및 효과음 등 오디오 전반)
+#     ("QA", "QA / Test"),                # QA, 자동화 포함
+# )
 
-    # Development
-    ("CLNT", "Client Developer"),   # 클라이언트 개발자
-    ("FRNT", "Frontend Developer"), # 프론트엔드 개발자
-    ("BACK", "Backend Developer"),  # 백엔드 개발자
-    ("SRVR", "Server Developer"),   # 서버 개발자
-    ("TOOL", "Tools Developer"),    # 툴 개발자
-    ("NET", "Network Programmer"),  # 네트워크 프로그래머
-    ("ENGN", "Engine Programmer"),  # 엔진 프로그래머
 
-    # Sound
-    ("COMP", "Composer"),           # 작곡가
-    ("SFX", "Sound Designer"),      # 사운드 디자이너
-    ("AUDI", "Audio Engineer"),     # 오디오 엔지니어
-
-    # QA / Test
-    ("QA", "QA Tester"),            # QA 테스터
-    ("QAPL", "QA Planner"),         # QA 기획자
-    ("AUTO", "Test Automation Engineer"),  # 테스트 자동화 엔지니어
-
-    # Operations / Biz
-    ("LIVE", "Live Ops Manager"),   # 라이브 운영 관리자
-    ("DATA", "Data Analyst"),       # 데이터 분석가
-    ("BIZ", "Business Analyst"),    # 비즈니스 분석가
-    ("COMM", "Community Manager"),  # 커뮤니티 매니저
-    ("CS", "Customer Support"),     # 고객 지원
-    ("MKT", "Marketing Manager"),   # 마케팅 매니저
-    ("MON", "Monetization Designer"), # 수익화 디자이너
-
-    # Visual (Marketing/Branding Design)
-    ("VIS", "Visual Designer"),     # 비주얼 디자이너 (마케팅/브랜딩)
-)
+class Role(models.Model):
+    name = models.CharField(max_length=50, unique=True)
 
 
 class TeamBuildPost(models.Model):
-    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="team_build_posts")
-    want_roles = models.JSONField()  # user.user_tech에서 선택한 기술 최대 10개
+    author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="team_build_post")
+    want_roles = models.ManyToManyField(
+        Role, related_name="team_build_post"
+    )
     title = models.CharField(max_length=100)
     thumbnail = models.ImageField(upload_to="images/thumbnail/teambuildings/")
     purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES)
@@ -120,11 +83,23 @@ class TeamBuildProfile(models.Model):
         ("JOBSEEKER", "취준생"),
         ("WORKER", "현직자"),
     ]
+    
+    def if_role_deleted():
+        return Role.objects.get_or_create(name="Need Update")[0]
+
 
     author = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="team_build_profile")
+    image = models.ImageField(
+        upload_to="images/profile/teambuildings/",
+        blank=True,
+        null=True,
+    )
     career = models.CharField(max_length=10, choices=CAREER_CHOICES)
-    my_role = models.CharField(max_length=4, choices=ROLE_CHOICES)
+    my_role = models.ForeignKey(Role, on_delete=models.SET(if_role_deleted), related_name="team_build_profile")
     tech_stack = models.TextField(max_length=200, null=True, blank=True)
+    game_genre = models.ManyToManyField(
+        GameCategory, related_name="team_build_profile"
+    )
     portfolio = models.JSONField(null=True, blank=True)
     purpose = models.CharField(max_length=20, choices=PURPOSE_CHOICES)
     duration = models.CharField(max_length=10, choices=DURATION_CHOICES)

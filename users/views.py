@@ -21,7 +21,6 @@ from games.models import (
 )
 from games.serializers import GameListSerializer
 from qnas.models import DeleteUsers
-from teambuildings.models import ROLE_CHOICES
 
 
 # ---------- API---------- #
@@ -215,14 +214,15 @@ class ProfileAPIView(APIView):
         )
 
 
-@api_view(["GET"])
-def user_tech_list(request):
-    techs = ROLE_CHOICES
-    return std_response(
-        data=techs,
-        status="success",
-        status_code=status.HTTP_200_OK
-    )
+# teambuildings 앱으로 이관 예정
+# @api_view(["GET"])
+# def user_tech_list(request):
+#     techs = ROLE_CHOICES
+#     return std_response(
+#         data=techs,
+#         status="success",
+#         status_code=status.HTTP_200_OK
+#     )
 
 
 @api_view(["GET"])
