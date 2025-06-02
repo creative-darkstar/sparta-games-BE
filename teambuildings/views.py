@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Q
 from django.core.files.storage import default_storage
@@ -462,7 +462,7 @@ class TeamBuildPostDetailAPIView(APIView):
             return std_response(
                 message="작성자만 삭제할 수 있습니다.",
                 status="fail",
-                error_code="PERMISSION_DENIED",
+                error_code="CLIENT_FAIL",
                 status_code=status.HTTP_403_FORBIDDEN
             )
         
@@ -471,6 +471,35 @@ class TeamBuildPostDetailAPIView(APIView):
         post.save()
         return std_response(
             message="팀빌딩 게시글이 삭제되었습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
+    
+    def patch(self, request, post_id):
+        """
+        팀빌딩 게시글 마감 API
+        """
+        
+        post= self.get_object(post_id)
+        if isinstance(post, dict):
+            return post
+        
+        # 권한 확인
+        if request.user != post.author:
+            return std_response(
+                message="작성자만 마감할 수 있습니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        new_deadline = timezone.now().date() - timedelta(days=1)
+
+        post.deadline = new_deadline
+        post.save()
+
+        return std_response(
+            message="팀빌딩 게시글이 마감되었습니다.",
             status="success",
             status_code=status.HTTP_200_OK
         )
