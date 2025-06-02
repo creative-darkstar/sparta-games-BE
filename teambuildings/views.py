@@ -6,7 +6,7 @@ from rest_framework.permissions import IsAuthenticated
 from .pagination import TeamBuildPostPagination
 
 from .models import TeamBuildPost, TeamBuildProfile
-from .models import ROLE_CHOICES, PURPOSE_CHOICES, DURATION_CHOICES
+from .models import ROLE_CHOICES, PURPOSE_CHOICES, DURATION_CHOICES,MEETING_TYPE_CHOICES
 from rest_framework import status
 from spartagames.utils import std_response
 from .serializers import TeamBuildPostSerializer
@@ -141,8 +141,119 @@ class TeamBuildPostAPIView(APIView):
                         status_code=status.HTTP_200_OK)
 
     def post(self, request):
-        # Logic to create a new team building post
-        pass
+        """
+        팀빌딩 게시글 작성 API
+        """
+        user = request.user
+
+        # 필수 필드 체크
+        required_fields = ["title", "want_roles", "purpose", "duration", "meeting_type", "deadline", "contact", "content"]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+
+        if missing_fields:
+            return std_response(
+                message=f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 썸네일 필수
+        if "thumbnail" not in request.FILES:
+            return std_response(
+                message="썸네일 이미지를 첨부해주세요.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 역할 목록 유효성 검사
+        want_roles = request.data.get("want_roles").split(",")
+        print(want_roles,type(want_roles))
+        if not isinstance(want_roles, list):
+            return std_response(
+                message="`want_roles`는 리스트 형식이어야 합니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        if len(want_roles) > 10:
+            return std_response(
+                message="`want_roles`는 최대 10개까지 선택 가능합니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # ROLE_CHOICES 검증
+        valid_roles = [role[0] for role in ROLE_CHOICES]
+        invalid_roles = [role for role in want_roles if role not in valid_roles]
+        if invalid_roles:
+            return std_response(
+                message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 선택지 유효성 검증
+        if request.data.get("purpose") not in [p[0] for p in PURPOSE_CHOICES]:
+            return std_response(
+                message="유효하지 않은 프로젝트 목적 코드입니다.(PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if request.data.get("duration") not in [d[0] for d in DURATION_CHOICES]:
+            return std_response(
+                message="유효하지 않은 프로젝트 기간 코드입니다.(3M, 6M, 1Y, GT1Y 중 하나)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        if request.data.get("meeting_type") not in [m[0] for m in MEETING_TYPE_CHOICES]:
+            return std_response(
+                message="유효하지 않은 진행 방식 코드입니다.(ONLINE, OFFLINE, BOTH 중 하나)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 날짜 포맷 검증
+        from datetime import datetime
+        try:
+            deadline = datetime.strptime(request.data.get("deadline"), "%Y-%m-%d").date()
+        except ValueError:
+            return std_response(
+                message="마감일은 YYYY-MM-DD 형식의 날짜여야 합니다.",
+                status="error",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 객체 생성
+        post = TeamBuildPost.objects.create(
+            author=user,
+            want_roles=want_roles,
+            title=request.data.get("title"),
+            thumbnail=request.FILES["thumbnail"],
+            purpose=request.data.get("purpose"),
+            duration=request.data.get("duration"),
+            meeting_type=request.data.get("meeting_type"),
+            deadline=request.data.get("deadline"),
+            contact=request.data.get("contact"),
+            content=request.data.get("content"),
+        )
+
+        return std_response(
+            data={"post_id": post.pk},
+            message="팀빌딩 모집글이 등록되었습니다.",
+            status="success",
+            status_code=status.HTTP_201_CREATED
+        )
+
 
 class TeamBuildPostDetailAPIView(APIView):
     """
