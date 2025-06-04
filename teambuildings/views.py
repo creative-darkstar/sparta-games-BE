@@ -1,17 +1,23 @@
+import os
+import requests  # S3 사용
+
 from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Q
 from django.core.files.storage import default_storage
+from django.core.files.images import ImageFile
+from django.core.files.base import ContentFile  # S3 사용
 
+from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from .pagination import TeamBuildPostPagination
-
-from .models import TeamBuildPost, TeamBuildProfile
-from .models import ROLE_CHOICES, PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
+from .utils import validate_want_roles, validate_choice
+from .models import TeamBuildPost, TeamBuildProfile, Role
+from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
 from spartagames.utils import std_response
-from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer
+from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer, RecommendedTeamBuildPostSerializer
 
 # Create your views here.
 
@@ -42,36 +48,36 @@ class TeamBuildPostAPIView(APIView):
         # 추천게시글/마감임박 게시글
         if not user or not user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
-            recommendedposts = recommendedposts.order_by('deadline')[:4]
-        # 유저 프로필 존재 여부 확인
-        profile = TeamBuildProfile.objects.filter(author=user).first()
-        if profile and user:
-            # 프로필 존재하면 직업 필터
-            my_role = profile.my_role
-            purpose = profile.purpose
-            duration = profile.duration
-
-            # POSTgreSQL용
-            # recommendedposts = recommendedposts.filter(
-            #     want_roles__contains=[my_role],
-            #     purpose=purpose,
-            #     duration=duration
-            # ).orderby('-create_dt')[:4]  # 최대 4개만 추천
-
-            # SQLite용
-            post_list = list(recommendedposts.orderby('-create_dt'))  # 쿼셋 평가
-            filtered_posts = [
-                post for post in post_list
-                if (
-                    my_role in post.want_roles and
-                    post.purpose == purpose and
-                    post.duration == duration
-                )
-            ]
-            recommendedposts = filtered_posts[:4]  # 최대 4개만 추천
+            recommendedposts = recommendedposts.filter(deadline__gte=timezone.now().date()).order_by('deadline')[:4]
         else:
-            # 유저 프로필이 없으면 마감 임박 4개
-            recommendedposts = recommendedposts.order_by('deadline')[:4]
+            # 유저 프로필 존재 여부 확인
+            profile = TeamBuildProfile.objects.filter(author=user).first()
+            if profile and user:
+                # 프로필 존재하면 직업 필터
+                my_role = profile.my_role
+                purpose = profile.purpose
+                duration = profile.duration
+
+                DURATION_ORDER = {
+                    "3M": 1,
+                    "6M": 2,
+                    "1Y": 3,
+                    "GT1Y": 4,
+                }
+
+                valid_duration = [
+                    key for key, order in DURATION_ORDER.items()
+                    if order <= DURATION_ORDER.get(duration, 4)
+                ]
+
+                recommendedposts = recommendedposts.filter(
+                    want_roles=my_role,
+                    purpose=purpose,
+                    duration__in=valid_duration
+                ).order_by('-create_dt')[:4]
+            else:
+                # 유저 프로필이 없으면 마감 임박 4개
+                recommendedposts = recommendedposts.filter(deadline__gte=timezone.now().date()).order_by('deadline')[:4]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
@@ -85,8 +91,10 @@ class TeamBuildPostAPIView(APIView):
                 p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
             if invalid_purpose:
                 return std_response(
-                    message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)}",
-                    status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST
+                    message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             purpose_q = Q()
             for p in purpose_list:
@@ -101,8 +109,10 @@ class TeamBuildPostAPIView(APIView):
                 d for d in duration_list if d not in VALID_DURATION_KEYS]
             if invalid_duration:
                 return std_response(
-                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)}",
-                    status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST
+                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
             duration_q = Q()
             for d in duration_list:
@@ -110,26 +120,33 @@ class TeamBuildPostAPIView(APIView):
             teambuildposts = teambuildposts.filter(duration_q)
 
         # 유효한 역할코드 목록
-        VALID_ROLE_KEYS = [choice[0] for choice in ROLE_CHOICES]
         roles_list = list(set(request.query_params.getlist('roles', None)))
         if roles_list:
             # 10개 초과 시 에러 반환
             if len(roles_list) > 10:
-                return std_response(message=f"역할은 최대 10개만 가능합니다.(현재 {len(roles_list)}개)", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
+                return std_response(
+                    message=f"역할은 최대 10개만 가능합니다.(현재 {len(roles_list)}개)",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            # 유효한 Role name 목록을 DB에서 조회
+            valid_role_names = list(Role.objects.filter(
+                name__in=roles_list).values_list('name', flat=True))
 
             # 유효하지 않은 role 코드가 포함되면 에러 반환
             invalid_roles = [
-                role for role in roles_list if role not in VALID_ROLE_KEYS]
+                role for role in roles_list if role not in valid_role_names]
             if invalid_roles:
-                return std_response(message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-
-            # role 필터링 SQLite에서 JSONField의 contains를 사용X=>POSTgreSQL로 전환이나 N:M 전환 필요
-            # for role in role_list:
-            #    teambuildposts = teambuildposts.filter(want_roles__contains=[role])
-            # SQLite 용 임시
-            posts = list(teambuildposts)  # 쿼셋 평가
-            teambuildposts = [post for post in posts if any(
-                role in post.want_roles for role in roles_list)]
+                return std_response(
+                    message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            teambuildposts = teambuildposts.filter(
+                want_roles__name__in=roles_list).distinct()
 
         # 페이지네이션
         paginator = TeamBuildPostPagination()
@@ -138,7 +155,7 @@ class TeamBuildPostAPIView(APIView):
         response_data = paginator.get_paginated_response(serializer.data).data
 
         # 추천 게시글 직렬화
-        recommended_serializer = TeamBuildPostSerializer(
+        recommended_serializer = RecommendedTeamBuildPostSerializer(
             recommendedposts, many=True)
 
         data = {
@@ -173,67 +190,38 @@ class TeamBuildPostAPIView(APIView):
             )
 
         # 썸네일 필수
-        if "thumbnail" not in request.FILES:
+        thumbnail = request.FILES.get("thumbnail", None)
+        thumbnail_basic = request.data.get("thumbnail_basic", None)
+        if not thumbnail and thumbnail_basic != "default":
             return std_response(
-                message="썸네일 이미지를 첨부해주세요.",
+                message="썸네일 이미지가 첨부되지 않았습니다.",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
         # 역할 목록 유효성 검사
-        want_roles = request.data.get("want_roles").split(",")
-        if not isinstance(want_roles, list):
+        raw_roles = request.data.getlist("want_roles", [])
+        want_roles, role_error = validate_want_roles(raw_roles)
+        if role_error:
             return std_response(
-                message="`want_roles`는 리스트 형식이어야 합니다.",
-                status="fail",
-                error_code="CLIENT_FAIL",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-        if len(want_roles) > 10:
-            return std_response(
-                message="`want_roles`는 최대 10개까지 선택 가능합니다.",
-                status="fail",
-                error_code="CLIENT_FAIL",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-
-        # ROLE_CHOICES 검증
-        valid_roles = [role[0] for role in ROLE_CHOICES]
-        invalid_roles = [
-            role for role in want_roles if role not in valid_roles]
-        if invalid_roles:
-            return std_response(
-                message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                message=role_error,
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
         # 선택지 유효성 검증
-        if request.data.get("purpose") not in [p[0] for p in PURPOSE_CHOICES]:
-            return std_response(
-                message="유효하지 않은 프로젝트 목적 코드입니다.(PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
-                status="fail",
-                error_code="CLIENT_FAIL",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-
-        if request.data.get("duration") not in [d[0] for d in DURATION_CHOICES]:
-            return std_response(
-                message="유효하지 않은 프로젝트 기간 코드입니다.(3M, 6M, 1Y, GT1Y 중 하나)",
-                status="fail",
-                error_code="CLIENT_FAIL",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
-
-        if request.data.get("meeting_type") not in [m[0] for m in MEETING_TYPE_CHOICES]:
-            return std_response(
-                message="유효하지 않은 진행 방식 코드입니다.(ONLINE, OFFLINE, BOTH 중 하나)",
-                status="fail",
-                error_code="CLIENT_FAIL",
-                status_code=status.HTTP_400_BAD_REQUEST
-            )
+        for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES)]:
+            is_valid, error = validate_choice(
+                request.data.get(field), choices, field)
+            if not is_valid:
+                return std_response(
+                    message=error,
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
 
         # 날짜 포맷 검증
         try:
@@ -250,16 +238,24 @@ class TeamBuildPostAPIView(APIView):
         # 객체 생성
         post = TeamBuildPost.objects.create(
             author=user,
-            want_roles=want_roles,
             title=request.data.get("title"),
-            thumbnail=request.FILES["thumbnail"],
             purpose=request.data.get("purpose"),
             duration=request.data.get("duration"),
             meeting_type=request.data.get("meeting_type"),
-            deadline=request.data.get("deadline"),
+            deadline=deadline,
             contact=request.data.get("contact"),
             content=request.data.get("content"),
         )
+
+        # 썸네일 할당
+        if thumbnail:
+            post.thumbnail = thumbnail
+        elif thumbnail_basic == "default":
+            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+        post.save()
+
+        # 역할 추가
+        post.want_roles.set(Role.objects.filter(name__in=want_roles))
 
         return std_response(
             data={"post_id": post.pk},
@@ -277,7 +273,7 @@ class TeamBuildPostDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put','delete', 'patch'): # 수정, 삭제, 마감할 때만 로그인
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -298,7 +294,7 @@ class TeamBuildPostDetailAPIView(APIView):
         팀빌딩 게시글 상세조회 API
         """
         post = self.get_object(post_id)
-        if isinstance(post, dict):
+        if isinstance(post, Response):
             return post
         serilizer = TeamBuildPostDetailSerializer(post).data
         return std_response(
@@ -313,7 +309,7 @@ class TeamBuildPostDetailAPIView(APIView):
         팀빌딩 게시글 수정 API
         """
         post = self.get_object(post_id)
-        if isinstance(post, dict):
+        if isinstance(post, Response):
             return post
         if post.author != request.user:
             return std_response(
@@ -344,52 +340,38 @@ class TeamBuildPostDetailAPIView(APIView):
             post.contact = contact
 
         # thumbnail
-        thumbnail = request.FILES.get("thumbnail")
+        thumbnail = request.FILES.get("thumbnail", None)
+        thumbnail_basic = request.data.get("thumbnail_basic", None)
         if thumbnail:
-            #기존 썸네일 삭제(메인에서 활성화)
-            #if post.thumbnail:
+            # 기존 썸네일 삭제(메인에서 활성화)
+            # if post.thumbnail:
             #    default_storage.delete(post.thumbnail.name)
             #    post.thumbnail.delete(save=False)
             changes.append("thumbnail")
             post.thumbnail = thumbnail
+        elif thumbnail_basic == "default":
+            # 기본 이미지로 설정
+            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+            changes.append("thumbnail")
 
-        # purpose
-        purpose = data.get("purpose", post.purpose)
-        if purpose and purpose != post.purpose:
-            if purpose not in dict(PURPOSE_CHOICES):
-                return std_response(
-                    message="유효하지 않은 프로젝트 목적입니다.(PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            post.purpose = purpose
-            changes.append("purpose")
-
-        # duration
-        duration = data.get("duration", post.duration)
-        if duration and duration != post.duration:
-            if duration not in dict(DURATION_CHOICES):
-                return std_response(
-                    message="유효하지 않은 프로젝트 기간입니다.(3M, 6M, 1Y, GT1Y 중 하나)",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            post.duration = duration
-            changes.append("duration")
-
-        # meeting_type
-        meeting_type = data.get("meeting_type", post.meeting_type)
-        if meeting_type and meeting_type != post.meeting_type:
-            if meeting_type not in dict(MEETING_TYPE_CHOICES):
-                return std_response(
-                    message="유효하지 않은 진행 방식입니다.(ONLINE, OFFLINE, BOTH 중 하나)",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST)
-            post.meeting_type = meeting_type
-            changes.append("meeting_type")
+        # 선택지 유효성 검증 (필드 변경 시만 적용)
+        for field, choices in [
+            ("purpose", PURPOSE_CHOICES),
+            ("duration", DURATION_CHOICES),
+            ("meeting_type", MEETING_TYPE_CHOICES),
+        ]:
+            value = data.get(field)
+            if value and value != getattr(post, field):
+                is_valid, error = validate_choice(value, choices, field)
+                if not is_valid:
+                    return std_response(
+                        message=error,
+                        status="fail",
+                        error_code="CLIENT_FAIL",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                setattr(post, field, value)
+                changes.append(field)
 
         # deadline
         deadline = data.get("deadline")
@@ -408,37 +390,20 @@ class TeamBuildPostDetailAPIView(APIView):
                 )
 
         # want_roles
-        want_roles = data.get("want_roles")
+        raw_roles = data.get("want_roles", [])
+        want_roles, role_error = validate_want_roles(raw_roles)
+        if role_error:
+            return std_response(
+                message=role_error,
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
         if want_roles:
-            if isinstance(want_roles, str):
-                want_roles = want_roles.split(",")
-            if not isinstance(want_roles, list):
-                return std_response(
-                    message="`want_roles`는 리스트여야 합니다.",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code=400)
-            if len(want_roles) > 10:
-                return std_response(
-                    message="역할은 최대 10개까지 선택 가능합니다.",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-            invalid_roles = [
-                r for r in want_roles if r not in dict(ROLE_CHOICES)]
-            if invalid_roles:
-                return std_response(
-                    message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
-                    status="fail",
-                    error_code="CLIENT_FAIL",
-                    status_code= status.HTTP_400_BAD_REQUEST
-                )
-            if want_roles != post.want_roles:
-                post.want_roles = want_roles
-                changes.append("want_roles")
+            post.want_roles.set(Role.objects.filter(name__in=want_roles))
+            changes.append("want_roles")
 
-        # 변경사항이 없으면 에러 반환
+        # 변경사항이 있으면 저장
         if changes:
             post.save()
 
@@ -453,10 +418,10 @@ class TeamBuildPostDetailAPIView(APIView):
         """
         팀빌딩 게시글 삭제 API
         """
-        post= self.get_object(post_id)
-        if isinstance(post, dict):
+        post = self.get_object(post_id)
+        if isinstance(post, Response):
             return post
-        
+
         # 권한 확인
         if request.user != post.author and not request.user.is_staff:
             return std_response(
@@ -465,7 +430,7 @@ class TeamBuildPostDetailAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_403_FORBIDDEN
             )
-        
+
         # 팀빌딩 게시글 소프트 삭제
         post.is_visible = False
         post.save()
@@ -474,16 +439,16 @@ class TeamBuildPostDetailAPIView(APIView):
             status="success",
             status_code=status.HTTP_200_OK
         )
-    
+
     def patch(self, request, post_id):
         """
         팀빌딩 게시글 마감 API
         """
-        
-        post= self.get_object(post_id)
-        if isinstance(post, dict):
+
+        post = self.get_object(post_id)
+        if isinstance(post, Response):
             return post
-        
+
         # 권한 확인
         if request.user != post.author:
             return std_response(
