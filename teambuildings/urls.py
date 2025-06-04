@@ -7,4 +7,6 @@ app_name = "teambuildings"
 urlpatterns = [
     # ---------- API---------- #
     # 참고용: path("api/<int:user_id>/", views.ProfileAPIView.as_view(), name="profile"),
+    path("api/teambuild/", views.TeamBuildPostAPIView.as_view(), name="teambuild_list"),
+    path("api/teambuild/<int:post_id>/", views.TeamBuildPostDetailAPIView.as_view(), name="teambuild_detail"),
 ]
