@@ -12,49 +12,9 @@ from teambuildings.models import (
 
 from games.utils import validate_image
 
-# Create your views here.
-class TeamBuildProfileAPIView(APIView):
+class CreateTeamBuildProfileAPIView(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
-    def get(self, request, user_id):
-        try:
-            user = get_user_model().objects.get(pk=user_id, is_active=True)
-            profile = TeamBuildProfile.objects.get(author=user_id)
-        except get_user_model().DoesNotExist:
-            return std_response(
-                message="회원정보가 존재하지 않습니다.",
-                status="error",
-                error_code="SERVER_FAIL",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        except TeamBuildProfile.DoesNotExist:
-            return std_response(
-                message="아직 생성하지 않은 유저입니다다.",
-                status="error",
-                error_code="SERVER_FAIL",
-                status_code=status.HTTP_404_NOT_FOUND
-            )
-        # 프로필 이미지 체크크
-        profile_image = profile.image.url if profile.image else ''
-        data = {
-            "author" : user_id,
-            "profile_image" : profile_image,
-            "career" : profile.career,
-            "my_role" : profile.my_role,
-            "tech_stack" : profile.tech_stack,
-            "game_genre" : profile.game_genre,
-            "portfolio" : profile.portfolio,
-            "purpose" : profile.purpose,
-            "duration" : profile.duration,
-            "meeting_type" : profile.meeting_type,
-            "contact" : profile.contact,
-            "title" : profile.title,
-            "content" : profile.content,
-        }
-        return std_response(
-            data=data,
-            status="success",
-            status_code=status.HTTP_200_OK
-        )
+    
     def post(self, request):
         # 필수 항목 확인
         required_fields = ["career", "my_role", "tech_stack", "purpose", "duration", "meeting_type", "contact", "title", "content"]
@@ -119,6 +79,52 @@ class TeamBuildProfileAPIView(APIView):
             status="success",
             status_code=status.HTTP_200_OK
         )
+
+# Create your views here.
+class TeamBuildProfileAPIView(APIView):
+    permission_classes = [IsAuthenticatedOrReadOnly]
+    def get(self, request, user_id):
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+            profile = TeamBuildProfile.objects.get(author=user_id)
+        except get_user_model().DoesNotExist:
+            return std_response(
+                message="회원정보가 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        except TeamBuildProfile.DoesNotExist:
+            return std_response(
+                message="아직 생성하지 않은 유저입니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+        # 프로필 이미지 체크크
+        profile_image = profile.image.url if profile.image else ''
+        data = {
+            "author" : user_id,
+            "profile_image" : profile_image,
+            "career" : profile.career,
+            "my_role" : profile.my_role,
+            "tech_stack" : profile.tech_stack,
+            "game_genre" : profile.game_genre,
+            "portfolio" : profile.portfolio,
+            "purpose" : profile.purpose,
+            "duration" : profile.duration,
+            "meeting_type" : profile.meeting_type,
+            "contact" : profile.contact,
+            "title" : profile.title,
+            "content" : profile.content,
+        }
+        return std_response(
+            message="프로필 생성 완료",
+            data=data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
+    
     def put(self, request, user_id):
         try:
             user = get_user_model().objects.get(pk=user_id, is_active=True)
