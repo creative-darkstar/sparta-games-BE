@@ -78,6 +78,7 @@ class TeamBuildProfileAPIView(APIView):
         title = request.data.get('title')
         content = request.data.get('content')
 
+        # 유효성 검사
         # 프로필 이미지 검증
         if profile_image:
             is_valid, error_msg = validate_image(profile_image)
@@ -113,7 +114,7 @@ class TeamBuildProfileAPIView(APIView):
         )
 
         return std_response(
-            message="팀빌딩 프로필 등록 완료료",
+            message="팀빌딩 프로필 등록 완료",
             data=profile,
             status="success",
             status_code=status.HTTP_200_OK
