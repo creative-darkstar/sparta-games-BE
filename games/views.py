@@ -78,6 +78,7 @@ class GameListAPIView(APIView):
         rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1]).order_by('-created_at')[:limit]
         rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2]).order_by('-created_at')[:limit]
         favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1).order_by('-created_at')[:limit]
+        updated_games = Game.objects.filter(is_visible=True, register_state=1).order_by('-updated_at')[:limit]
         if new_game_chip:
             recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at')[:limit]
         else:
@@ -124,6 +125,7 @@ class GameListAPIView(APIView):
         serializer3 = GameListSerializer(rand3, many=True, context={'user': request.user})
         favorite_serializer = GameListSerializer(favorites, many=True, context={'user': request.user}).data if favorites.exists() else []
         recent_serializer = GameListSerializer(recent_games, many=True, context={'user': request.user}).data if recent_games.exists() else []
+        updated_serializer = GameListSerializer(updated_games, many=True, context={'user': request.user}).data if updated_games.exists() else []
 
         # 응답 데이터 구성
         data = {
@@ -141,6 +143,7 @@ class GameListAPIView(APIView):
             },
             "trending_games": favorite_serializer,
             "recent": recent_serializer,
+            "updated": updated_serializer,
         }
         # 2024-12-30 FE 요청으로 games/api/list 에서 게임팩 삭제, users/api/<int:user_pk>/gamepacks/ 로 이관
         # if request.user.is_authenticated:
