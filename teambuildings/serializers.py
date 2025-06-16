@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import TeamBuildPost
+from .models import TeamBuildProfile
 
 
 class TeamBuildPostSerializer(serializers.ModelSerializer):
@@ -88,3 +89,33 @@ class RecommendedTeamBuildPostSerializer(serializers.ModelSerializer):
     
     def get_thumbnail(self, obj):
         return obj.thumbnail.url if obj.thumbnail else None
+    
+
+class TeamBuildProfileSerializer(serializers.ModelSerializer):
+    author_data = serializers.SerializerMethodField()
+    profile_image = serializers.SerializerMethodField()
+    game_genre = serializers.SlugRelatedField(
+        many=True, read_only=True, slug_field="name"
+    )
+    my_role = serializers.SlugRelatedField(
+        read_only=True, slug_field="name"
+    )
+
+    class Meta:
+        model = TeamBuildProfile
+        fields = (
+            'id', 'author_data', 'profile_image', 'career', 'my_role',
+            'tech_stack', 'game_genre', 'portfolio',
+            'purpose', 'duration', 'meeting_type',
+            'contact', 'title', 'content',
+        )
+
+    def get_author_data(self, obj):
+        return {
+            "id": obj.author.id,
+            "nickname": obj.author.nickname,
+            "image": obj.author.image.url if obj.author.image else None,
+        }
+
+    def get_profile_image(self, obj):
+        return obj.image.url if obj.image else None
