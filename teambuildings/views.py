@@ -48,7 +48,8 @@ class TeamBuildPostAPIView(APIView):
         # 추천게시글/마감임박 게시글
         if not user or not user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
-            recommendedposts = recommendedposts.filter(deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+            recommendedposts = recommendedposts.filter(
+                deadline__gte=timezone.now().date()).order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
             profile = TeamBuildProfile.objects.filter(author=user).first()
@@ -77,7 +78,8 @@ class TeamBuildPostAPIView(APIView):
                 ).order_by('-create_dt')[:4]
             else:
                 # 유저 프로필이 없으면 마감 임박 4개
-                recommendedposts = recommendedposts.filter(deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+                recommendedposts = recommendedposts.filter(
+                    deadline__gte=timezone.now().date()).order_by('deadline')[:4]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
@@ -158,9 +160,15 @@ class TeamBuildPostAPIView(APIView):
         recommended_serializer = RecommendedTeamBuildPostSerializer(
             recommendedposts, many=True)
 
+        # 프로필 존재 여부
+        profile_exists = False
+        if request.user.is_authenticated:
+            profile_exists = TeamBuildProfile.objects.filter(author=request.user).exists()
+
         data = {
             "team_build_posts": response_data["results"],
-            "recommended_posts": recommended_serializer.data
+            "recommended_posts": recommended_serializer.data,
+            "profile_exists": profile_exists
         }
 
         return std_response(data=data,
@@ -273,7 +281,7 @@ class TeamBuildPostDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() in ('put','delete', 'patch'): # 수정, 삭제, 마감할 때만 로그인
+        if self.request.method.lower() in ('put', 'delete', 'patch'):  # 수정, 삭제, 마감할 때만 로그인
             permissions.append(IsAuthenticated())
 
         return permissions
