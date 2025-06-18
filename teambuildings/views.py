@@ -168,7 +168,7 @@ class TeamBuildPostAPIView(APIView):
         data = {
             "team_build_posts": response_data["results"],
             "recommended_posts": recommended_serializer.data,
-            "profile_exists": profile_exists
+            "is_profile": profile_exists
         }
 
         return std_response(data=data,
