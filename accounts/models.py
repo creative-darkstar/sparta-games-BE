@@ -65,7 +65,7 @@ class User(AbstractUser):
         ("FE", "Frontend"),
         ("BE", "Backend"),
     )
-    user_tech = models.CharField(max_length=4, choices=USER_TECH_CHOICES)
+    # user_tech = models.CharField(max_length=4, choices=USER_TECH_CHOICES)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['nickname']
