@@ -298,3 +298,22 @@ ACCOUNT_USER_MODEL_USERNAME_FIELD = None  # username 필드를 사용하지 않�
 ACCOUNT_EMAIL_REQUIRED = True  # 이메일을 필수로 요구
 ACCOUNT_USERNAME_REQUIRED = False  # username 필드를 사용하지 않음
 ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'django_error.log',
+        },
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
+}
