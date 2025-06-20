@@ -29,6 +29,7 @@ urlpatterns = [
     path('games/', include('games.urls')),
     path('directs/', include('qnas.urls')),    #2025-01-03 기존 qnas 앱은 놔두고 url 패턴 수정
     path('teams/', include('teambuildings.urls')),
+    path('commons/', include('commons.urls')),
 
     # ---------- Web ---------- #
     # path('', views.main_view, name='main_view'),
