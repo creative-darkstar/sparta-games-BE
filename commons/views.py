@@ -48,15 +48,14 @@ def generate_presigned_url(base_path, extension):
         Params={
             'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
             'Key': object_key,
-            'ContentType': f'{file_type}/{extension}',
-            'ACL': 'public-read'  # presigned로 public 업로드 허용
+            'ContentType': f'{file_type}/*',
+            # 'ACL': 'public-read'  # presigned로 public 업로드 허용
         },
         ExpiresIn=600  # 10분간 유효
     )
     
-    # image_url = f'https://{settings.AWS_S3_CUSTOM_DOMAIN}/{object_key}'
-    # return presigned_url, image_url
-    return presigned_url
+    real_url = f'https://{settings.AWS_S3_CUSTOM_DOMAIN}/{object_key}'
+    return presigned_url, real_url
 
 
 class S3UploadPresignedUrlView(APIView):
@@ -69,13 +68,13 @@ class S3UploadPresignedUrlView(APIView):
         res = generate_presigned_url(base_path, extension)
         if isinstance(res, Response):
             return res
-        presigned_url = res
+        presigned_url, real_url = res
         
         return std_response(
             status="success",
             data={
                 'upload_url': presigned_url,
-                # 'url': image_url  # FE가 content에 넣을 주소
+                'url': real_url  # FE가 content에 넣을 주소
             },
             status_code=status.HTTP_200_OK
         )
