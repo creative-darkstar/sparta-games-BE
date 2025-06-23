@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile  # S3 사용
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from .pagination import TeamBuildPostPagination
+from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
 from .utils import validate_want_roles, validate_choice
 from .models import TeamBuildPost, TeamBuildProfile, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
@@ -549,7 +549,7 @@ class CreateTeamBuildProfileAPIView(APIView):
             profiles = profiles.filter(my_role__name__in=role_names)
 
         # 페이지네이션 적용
-        paginator = TeamBuildPostPagination()
+        paginator = TeamBuildProfileListPagination()
         paginated_profiles = paginator.paginate_queryset(profiles, request)
         serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
