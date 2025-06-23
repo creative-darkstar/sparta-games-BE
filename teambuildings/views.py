@@ -7,16 +7,21 @@ from django.db.models import Q
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
+from django.contrib.contenttypes.models import ContentType
 
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+
+from commons.models import UploadImage
 from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
-from .utils import validate_want_roles, validate_choice
+from .utils import delete_srcs, validate_want_roles, validate_choice, extract_srcs
 from .models import TeamBuildPost, TeamBuildProfile, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
+from spartagames.config import AWS_S3_BUCKET_IMAGES
 from spartagames.utils import std_response
+# from spartagames.settings import AWS_S3_CUSTOM_DOMAIN
 from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer, RecommendedTeamBuildPostSerializer, TeamBuildProfileSerializer
 from games.models import GameCategory
 
@@ -270,6 +275,17 @@ class TeamBuildPostAPIView(APIView):
         # 역할 추가
         post.want_roles.set(Role.objects.filter(name__in=want_roles))
 
+        # content 에서 img src 파싱
+        srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+        for src in srcs:
+            UploadImage.objects.create(
+                content_type=ContentType.objects.get_for_model(post),
+                content_id=post.id,
+                uploader=user,
+                src=src,
+                is_used=True
+            )
+
         return std_response(
             data={"post_id": post.pk},
             message="팀빌딩 모집글이 등록되었습니다.",
@@ -345,6 +361,26 @@ class TeamBuildPostDetailAPIView(APIView):
         if content != post.content:
             changes.append("content")
             post.content = content
+        
+            # content 에서 img src 파싱
+            old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
+            new_srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            
+            # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+            for src in set(old_srcs) - set(new_srcs):
+                obj = UploadImage.objects.get(src=src)
+                obj.is_used = False
+                obj.save()
+            
+            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
+            for src in set(new_srcs) - set(old_srcs):
+                UploadImage.objects.create(
+                    content_type=ContentType.objects.get_for_model(post),
+                    content_id=post.id,
+                    uploader=request.user,
+                    src=src,
+                    is_used=True
+                )
 
         # contact
         contact = data.get("contact", post.contact)
@@ -444,9 +480,13 @@ class TeamBuildPostDetailAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
+        UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True).update(is_used=False)
+
         # 팀빌딩 게시글 소프트 삭제
         post.is_visible = False
         post.save()
+        
         return std_response(
             message="팀빌딩 게시글이 삭제되었습니다.",
             status="success",
@@ -656,6 +696,17 @@ class CreateTeamBuildProfileAPIView(APIView):
         )
         profile.game_genre.set(game_genres)
 
+        # content 에서 img src 파싱
+        srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+        for src in srcs:
+            UploadImage.objects.create(
+                content_type=ContentType.objects.get_for_model(profile),
+                content_id=profile.id,
+                uploader=author,
+                src=src,
+                is_used=True
+            )
+
         return std_response(
             data={"profile_id": profile.id},
             message="팀빌딩 프로필 등록 완료",
@@ -748,6 +799,26 @@ class TeamBuildProfileAPIView(APIView):
         profile.contact = request.data.get("contact", profile.contact)
         profile.title = request.data.get("title", profile.title)
         profile.content = request.data.get("content", profile.content)
+        
+        # content 에서 img src 파싱
+        old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
+        new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+        
+        # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+        for src in set(old_srcs) - set(new_srcs):
+            obj = UploadImage.objects.get(src=src)
+            obj.is_used = False
+            obj.save()
+        
+        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
+        for src in set(new_srcs) - set(old_srcs):
+            UploadImage.objects.create(
+                content_type=ContentType.objects.get_for_model(profile),
+                content_id=profile.id,
+                uploader=request.user,
+                src=src,
+                is_used=True
+            )
 
         profile.save()
 
@@ -779,6 +850,9 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
+        UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True).update(is_used=False)
+        
         profile.delete()
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
