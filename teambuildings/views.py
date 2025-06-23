@@ -479,7 +479,7 @@ class CreateTeamBuildProfileAPIView(APIView):
 
     # 팀빌딩 프로필 목록 호출
     def get(self, request):
-        profiles = TeamBuildProfile.objects.filter(author__is_visible=True).order_by('-create_dt')
+        profiles = TeamBuildProfile.objects.order_by('-create_dt')
 
         # 필터: career
         career_list = request.query_params.getlist('career')
