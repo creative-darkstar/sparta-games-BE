@@ -476,6 +476,95 @@ class TeamBuildPostDetailAPIView(APIView):
 
 class CreateTeamBuildProfileAPIView(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
+
+    # 팀빌딩 프로필 목록 호출
+    def get(self, request):
+        profiles = TeamBuildProfile.objects.filter(author__is_visible=True).order_by('-create_dt')
+
+        # 필터: career
+        career_list = request.query_params.getlist('career')
+        if career_list:
+            valid_careers = [c[0] for c in TeamBuildProfile.CAREER_CHOICES]
+            invalid_careers = [c for c in career_list if c not in valid_careers]
+            if invalid_careers:
+                return std_response(
+                    message=f"유효하지 않은 커리어 코드입니다: {', '.join(invalid_careers)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(career__in=career_list)
+
+        # 필터: purpose
+        purpose_list = request.query_params.getlist('purpose')
+        if purpose_list:
+            valid_purposes = [p[0] for p in PURPOSE_CHOICES]
+            invalid_purposes = [p for p in purpose_list if p not in valid_purposes]
+            if invalid_purposes:
+                return std_response(
+                    message=f"유효하지 않은 목적 코드입니다: {', '.join(invalid_purposes)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(purpose__in=purpose_list)
+
+        # 필터: duration
+        duration_list = request.query_params.getlist('duration')
+        if duration_list:
+            valid_durations = [d[0] for d in DURATION_CHOICES]
+            invalid_durations = [d for d in duration_list if d not in valid_durations]
+            if invalid_durations:
+                return std_response(
+                    message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(duration__in=duration_list)
+
+        # 필터: roles
+        role_names = request.query_params.getlist('roles')
+        if role_names:
+            if len(role_names) > 10:
+                return std_response(
+                    message=f"역할은 최대 10개만 가능합니다. (현재 {len(role_names)}개)",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            valid_role_names = list(Role.objects.filter(
+                name__in=role_names).values_list('name', flat=True))
+
+            invalid_roles = [r for r in role_names if r not in valid_role_names]
+            if invalid_roles:
+                return std_response(
+                    message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            profiles = profiles.filter(my_role__name__in=role_names)
+
+        # 페이지네이션 적용
+        paginator = TeamBuildPostPagination()
+        paginated_profiles = paginator.paginate_queryset(profiles, request)
+        serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
+        response_data = paginator.get_paginated_response(serializer.data).data
+
+        return std_response(
+            message="팀빌딩 프로필 목록 조회 성공",
+            data=response_data["results"],
+            status="success",
+            pagination={
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"],
+            },
+            status_code=status.HTTP_200_OK
+        )
     
     def post(self, request):
         if TeamBuildProfile.objects.filter(author=request.user).exists():
@@ -574,6 +663,7 @@ class TeamBuildProfileAPIView(APIView):
             permissions.append(IsAuthenticated())
         return permissions
 
+    # 개인 프로필 호출
     def get(self, request, user_id):
         try:
             user = get_user_model().objects.get(pk=user_id, is_active=True)
