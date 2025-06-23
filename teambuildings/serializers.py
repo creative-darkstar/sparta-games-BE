@@ -34,6 +34,7 @@ class TeamBuildPostSerializer(serializers.ModelSerializer):
         return obj.thumbnail.url if obj.thumbnail else None
     
 class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
+    status_chip = serializers.CharField(read_only=True)
     author_data = serializers.SerializerMethodField(read_only=True)
     thumbnail = serializers.ImageField(use_url=True)
     want_roles = serializers.SerializerMethodField()
@@ -43,9 +44,9 @@ class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
         fields = [
             "id", "title", "want_roles", "purpose", "duration", "meeting_type",
             "deadline", "contact", "content", "thumbnail", "author_data",
-            "create_dt"
+            "create_dt", 'status_chip'
         ]
-        read_only_fields = ["id", "author_data", "create_dt"]
+        read_only_fields = ["id", "author_data", "create_dt", 'status_chip']
 
     def get_author_data(self, obj):
         return {
