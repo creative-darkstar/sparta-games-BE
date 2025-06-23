@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
@@ -125,19 +127,3 @@ class TeamBuildPostComment(models.Model):
     is_visible = models.BooleanField(default=True)
     create_dt = models.DateTimeField(auto_now_add=True)
     update_dt = models.DateTimeField(auto_now=True)
-
-
-class TeamBuildScreenshot(models.Model):
-    TYPE_CHOICES = [
-        ("PR", "프로필"),
-        ("PT", "모집글"),
-    ]
-    
-    content_type = models.CharField(max_length=4, choices=TYPE_CHOICES)
-    content_id = models.PositiveIntegerField()
-    src = models.ImageField(
-        upload_to="images/screenshot/teambuildings/",
-        blank=True,
-        null=True,
-    )
-    order = models.IntegerField()
