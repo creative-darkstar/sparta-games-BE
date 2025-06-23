@@ -34,18 +34,20 @@ class TeamBuildPostSerializer(serializers.ModelSerializer):
         return obj.thumbnail.url if obj.thumbnail else None
     
 class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
+    status_chip = serializers.CharField(read_only=True)
     author_data = serializers.SerializerMethodField(read_only=True)
     thumbnail = serializers.ImageField(use_url=True)
     want_roles = serializers.SerializerMethodField()
+    thumbnail_basic = serializers.SerializerMethodField(read_only=True)  # 기본 이미지 여부
     
     class Meta:
         model = TeamBuildPost
         fields = [
             "id", "title", "want_roles", "purpose", "duration", "meeting_type",
             "deadline", "contact", "content", "thumbnail", "author_data",
-            "create_dt"
+            "create_dt", "status_chip", "thumbnail_basic"
         ]
-        read_only_fields = ["id", "author_data", "create_dt"]
+        read_only_fields = ["id", "author_data", "create_dt", "status_chip", "thumbnail_basic"]
 
     def get_author_data(self, obj):
         return {
@@ -56,6 +58,11 @@ class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
     
     def get_want_roles(self, obj):
         return list(obj.want_roles.values_list("name", flat=True))
+    
+    def get_thumbnail_basic(self, obj):
+        default_path = "images/thumbnail/teambuildings/teambuilding_default.png"
+        # obj.thumbnail.name 은 MEDIA_ROOT 하위 경로를 반환
+        return obj.thumbnail and obj.thumbnail.name == default_path
     
 class RecommendedTeamBuildPostSerializer(serializers.ModelSerializer):
     status_chip = serializers.CharField(read_only=True)
