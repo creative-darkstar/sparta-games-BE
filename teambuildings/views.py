@@ -398,7 +398,7 @@ class TeamBuildPostDetailAPIView(APIView):
                 )
 
         # want_roles
-        raw_roles = data.get("want_roles", [])
+        raw_roles = data.getlist("want_roles", [])
         want_roles, role_error = validate_want_roles(raw_roles)
         if role_error:
             return std_response(
