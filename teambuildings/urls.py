@@ -5,6 +5,8 @@ from . import views
 app_name = "teambuildings"
 
 urlpatterns = [
+    path("api/teambuild/profile/", views.CreateTeamBuildProfileAPIView.as_view(), name="createteamprofile"),
+    path("api/teambuild/profile/<int:user_id>/", views.TeamBuildProfileAPIView.as_view(), name="teamprofile"),
     # ---------- API---------- #
     # 참고용: path("api/<int:user_id>/", views.ProfileAPIView.as_view(), name="profile"),
     path("api/teambuild/", views.TeamBuildPostAPIView.as_view(), name="teambuild_list"),

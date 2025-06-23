@@ -11,14 +11,19 @@ from django.core.files.base import ContentFile  # S3 사용
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from .pagination import TeamBuildPostPagination
+from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
 from .utils import validate_want_roles, validate_choice
 from .models import TeamBuildPost, TeamBuildProfile, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
 from spartagames.utils import std_response
-from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer, RecommendedTeamBuildPostSerializer
+from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer, RecommendedTeamBuildPostSerializer, TeamBuildProfileSerializer
+from games.models import GameCategory
 
+from django.contrib.auth import get_user_model
+from rest_framework.permissions import IsAuthenticatedOrReadOnly
+
+from games.utils import validate_image
 # Create your views here.
 
 
@@ -473,6 +478,310 @@ class TeamBuildPostDetailAPIView(APIView):
 
         return std_response(
             message="팀빌딩 게시글이 마감되었습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
+
+class CreateTeamBuildProfileAPIView(APIView):
+    permission_classes = [IsAuthenticatedOrReadOnly]
+
+    # 팀빌딩 프로필 목록 호출
+    def get(self, request):
+        profiles = TeamBuildProfile.objects.order_by('-create_dt')
+
+        # 필터: career
+        career_list = request.query_params.getlist('career')
+        if career_list:
+            valid_careers = [c[0] for c in TeamBuildProfile.CAREER_CHOICES]
+            invalid_careers = [c for c in career_list if c not in valid_careers]
+            if invalid_careers:
+                return std_response(
+                    message=f"유효하지 않은 커리어 코드입니다: {', '.join(invalid_careers)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(career__in=career_list)
+
+        # 필터: purpose
+        purpose_list = request.query_params.getlist('purpose')
+        if purpose_list:
+            valid_purposes = [p[0] for p in PURPOSE_CHOICES]
+            invalid_purposes = [p for p in purpose_list if p not in valid_purposes]
+            if invalid_purposes:
+                return std_response(
+                    message=f"유효하지 않은 목적 코드입니다: {', '.join(invalid_purposes)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(purpose__in=purpose_list)
+
+        # 필터: duration
+        duration_list = request.query_params.getlist('duration')
+        if duration_list:
+            valid_durations = [d[0] for d in DURATION_CHOICES]
+            invalid_durations = [d for d in duration_list if d not in valid_durations]
+            if invalid_durations:
+                return std_response(
+                    message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+            profiles = profiles.filter(duration__in=duration_list)
+
+        # 필터: roles
+        role_names = request.query_params.getlist('roles')
+        if role_names:
+            if len(role_names) > 10:
+                return std_response(
+                    message=f"역할은 최대 10개만 가능합니다. (현재 {len(role_names)}개)",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            valid_role_names = list(Role.objects.filter(
+                name__in=role_names).values_list('name', flat=True))
+
+            invalid_roles = [r for r in role_names if r not in valid_role_names]
+            if invalid_roles:
+                return std_response(
+                    message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+            profiles = profiles.filter(my_role__name__in=role_names)
+
+        # 페이지네이션 적용
+        paginator = TeamBuildProfileListPagination()
+        paginated_profiles = paginator.paginate_queryset(profiles, request)
+        serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
+        response_data = paginator.get_paginated_response(serializer.data).data
+
+        return std_response(
+            message="팀빌딩 프로필 목록 조회 성공",
+            data=response_data["results"],
+            status="success",
+            pagination={
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"],
+            },
+            status_code=status.HTTP_200_OK
+        )
+    
+    def post(self, request):
+        if TeamBuildProfile.objects.filter(author=request.user).exists():
+            return std_response(
+                message="이미 팀빌딩 프로필이 존재합니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        required_fields = [
+            "career", "my_role", "tech_stack", "purpose", "duration",
+            "meeting_type", "contact", "title", "content"
+        ]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
+        if missing_fields:
+            return std_response(
+                message=f"필수 항목이 누락되었습니다: {', '.join(missing_fields)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        author = request.user
+        profile_image = request.FILES.get("image")
+
+        career = request.data.get("career")
+        tech_stack = request.data.get("tech_stack")
+        purpose = request.data.get("purpose")
+        duration = request.data.get("duration")
+        meeting_type = request.data.get("meeting_type")
+        contact = request.data.get("contact")
+        title = request.data.get("title")
+        content = request.data.get("content")
+
+        # 1. 역할 name 처리
+        my_role_name = request.data.get("my_role")
+        try:
+            my_role = Role.objects.get(name=my_role_name)
+        except Role.DoesNotExist:
+            return std_response(
+                message=f"역할 '{my_role_name}' 을(를) 찾을 수 없습니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 2. 장르 name 리스트 처리
+        genre_names = request.data.getlist("game_genre") or []
+        game_genres = GameCategory.objects.filter(name__in=genre_names)
+
+        # 3. 이미지 유효성 검사
+        if profile_image:
+            is_valid, error_msg = validate_image(profile_image)
+            if not is_valid:
+                return std_response(
+                    message=error_msg,
+                    status="fail",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
+                )
+
+        # 4. 포트폴리오: getlist로 받은 후 JSONField에 저장
+        portfolio_list = request.data.getlist("portfolio")
+        portfolio = portfolio_list if portfolio_list else None
+
+        # 5. 프로필 생성
+        profile = TeamBuildProfile.objects.create(
+            author=author,
+            image=profile_image,
+            career=career,
+            my_role=my_role,
+            tech_stack=tech_stack,
+            portfolio=portfolio,  # JSONField에 list 직접 저장 가능
+            purpose=purpose,
+            duration=duration,
+            meeting_type=meeting_type,
+            contact=contact,
+            title=title,
+            content=content,
+        )
+        profile.game_genre.set(game_genres)
+
+        return std_response(
+            data={"profile_id": profile.id},
+            message="팀빌딩 프로필 등록 완료",
+            status="success",
+            status_code=status.HTTP_201_CREATED
+        )
+
+# Create your views here.
+class TeamBuildProfileAPIView(APIView):
+    def get_permissions(self):
+        permissions = super().get_permissions()
+        if self.request.method.lower() in ['put', 'delete']:
+            permissions.append(IsAuthenticated())
+        return permissions
+
+    # 개인 프로필 호출
+    def get(self, request, user_id):
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+        except get_user_model().DoesNotExist:
+            return std_response(
+                message="회원정보가 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            profile = TeamBuildProfile.objects.get(author=user)
+        except TeamBuildProfile.DoesNotExist:
+            return std_response(
+                message="아직 생성하지 않은 유저입니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        serializer = TeamBuildProfileSerializer(profile)
+        return std_response(
+            message="팀빌딩 프로필 조회 성공",
+            data=serializer.data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
+
+    def put(self, request, user_id):
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+            profile = TeamBuildProfile.objects.get(author=user)
+        except (get_user_model().DoesNotExist, TeamBuildProfile.DoesNotExist):
+            return std_response(
+                message="회원정보 또는 프로필이 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if request.user != profile.author:
+            return std_response(
+                message="권한이 없습니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        # 프로필 이미지 처리
+        profile_image = request.data.get("profile_image")
+        if profile_image == "":
+            profile.image = None
+        elif request.FILES.get("profile_image"):
+            profile.image = request.FILES["profile_image"]
+
+        # 각 필드 업데이트
+        profile.career = request.data.get("career", profile.career)
+
+        role_name = request.data.get("my_role")
+        if role_name:
+            profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
+
+        game_genres = request.data.getlist("game_genre")
+        if game_genres:
+            genres = GameCategory.objects.filter(name__in=game_genres)
+            profile.game_genre.set(genres)
+
+        profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
+        profile.portfolio = request.data.get("portfolio", profile.portfolio)
+        profile.purpose = request.data.get("purpose", profile.purpose)
+        profile.duration = request.data.get("duration", profile.duration)
+        profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
+        profile.contact = request.data.get("contact", profile.contact)
+        profile.title = request.data.get("title", profile.title)
+        profile.content = request.data.get("content", profile.content)
+
+        profile.save()
+
+        serializer = TeamBuildProfileSerializer(profile)
+        return std_response(
+            message="팀빌딩 프로필 수정 완료",
+            data=serializer.data,
+            status="success",
+            status_code=status.HTTP_202_ACCEPTED
+        )
+
+    def delete(self, request, user_id):
+        try:
+            user = get_user_model().objects.get(pk=user_id, is_active=True)
+            profile = TeamBuildProfile.objects.get(author=user)
+        except (get_user_model().DoesNotExist, TeamBuildProfile.DoesNotExist):
+            return std_response(
+                message="회원정보 또는 프로필이 존재하지 않습니다.",
+                status="error",
+                error_code="SERVER_FAIL",
+                status_code=status.HTTP_404_NOT_FOUND
+            )
+
+        if request.user != profile.author:
+            return std_response(
+                message="권한이 없습니다.",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_403_FORBIDDEN
+            )
+
+        profile.delete()
+        return std_response(
+            message="팀빌딩 프로필 삭제 완료",
             status="success",
             status_code=status.HTTP_200_OK
         )
