@@ -46,20 +46,6 @@ def extract_srcs(html_text, base_url):
             if is_absolute_url(src):
                 results.append(src)
             else:
-                print(base_url)
-                print("★★★★★★★★★★★★★★★★★")
-                tmp = urljoin(base_url, src)
-                print(tmp)
-                results.append(tmp)
+                results.append(urljoin(base_url, src))
     
     return results
-
-
-def delete_srcs(old_srcs, new_srcs):
-    delete_list = []
-    
-    for item in old_srcs:
-        if item not in new_srcs:
-            delete_list.append(item)
-    
-    return delete_list

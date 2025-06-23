@@ -15,7 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from commons.models import UploadImage
 from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
-from .utils import delete_srcs, validate_want_roles, validate_choice, extract_srcs
+from .utils import validate_want_roles, validate_choice, extract_srcs
 from .models import TeamBuildPost, TeamBuildProfile, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
