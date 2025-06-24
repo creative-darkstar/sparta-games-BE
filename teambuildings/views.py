@@ -1,5 +1,6 @@
 import os
 import requests  # S3 사용
+import json
 
 from datetime import datetime, timedelta
 from django.utils import timezone
@@ -15,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from commons.models import UploadImage
 from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
-from .utils import validate_want_roles, validate_choice, extract_srcs
+from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
 from .models import TeamBuildPost, TeamBuildProfile, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
@@ -637,7 +638,14 @@ class CreateTeamBuildProfileAPIView(APIView):
             )
 
         author = request.user
-        profile_image = request.FILES.get("image")
+        # profile_image = request.FILES.get("image")
+
+        profile_image = None
+        if "image" in request.data:
+            if request.data.get("image") == "":
+                profile_image = None
+            elif request.FILES.get("image"):
+                profile_image = request.FILES["image"]
 
         career = request.data.get("career")
         tech_stack = request.data.get("tech_stack")
@@ -676,8 +684,14 @@ class CreateTeamBuildProfileAPIView(APIView):
                 )
 
         # 4. 포트폴리오: getlist로 받은 후 JSONField에 저장
-        portfolio_list = request.data.getlist("portfolio")
-        portfolio = portfolio_list if portfolio_list else None
+        portfolio, error = parse_links(request.data)
+        if error:
+            return std_response(
+                message=error,
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
 
         # 5. 프로필 생성
         profile = TeamBuildProfile.objects.create(
@@ -773,11 +787,11 @@ class TeamBuildProfileAPIView(APIView):
             )
 
         # 프로필 이미지 처리
-        profile_image = request.data.get("profile_image")
-        if profile_image == "":
-            profile.image = None
-        elif request.FILES.get("profile_image"):
-            profile.image = request.FILES["profile_image"]
+        if "profile_image" in request.data:
+            if request.data.get("profile_image") == "":
+                profile.image = None
+            elif request.FILES.get("profile_image"):
+                profile.image = request.FILES["profile_image"]
 
         # 각 필드 업데이트
         profile.career = request.data.get("career", profile.career)
@@ -792,13 +806,22 @@ class TeamBuildProfileAPIView(APIView):
             profile.game_genre.set(genres)
 
         profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
-        profile.portfolio = request.data.get("portfolio", profile.portfolio)
         profile.purpose = request.data.get("purpose", profile.purpose)
         profile.duration = request.data.get("duration", profile.duration)
         profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
         profile.contact = request.data.get("contact", profile.contact)
         profile.title = request.data.get("title", profile.title)
         profile.content = request.data.get("content", profile.content)
+
+        portfolio, error = parse_links(request.data)
+        if error:
+            return std_response(
+                message=error,
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        profile.portfolio = portfolio
         
         # content 에서 img src 파싱
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
