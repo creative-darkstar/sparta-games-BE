@@ -1,4 +1,5 @@
 from bs4 import BeautifulSoup
+import json
 from urllib.parse import urljoin, urlparse
 
 from .models import Role
@@ -49,3 +50,24 @@ def extract_srcs(html_text, base_url):
                 results.append(urljoin(base_url, src))
     
     return results
+
+
+def parse_links(data):
+    try:
+        if hasattr(data, "getlist"):
+            raw_list = data.getlist("links")
+        else:
+            raw = data.get("links", "[]")
+            raw_list = json.loads(raw) if isinstance(raw, str) else raw
+
+        parsed = []
+        for i, item in enumerate(raw_list):
+            if isinstance(item, str):
+                item = json.loads(item)
+            if isinstance(item, dict) and "link" in item:
+                parsed.append(item)
+            else:
+                raise ValueError(f"links[{i}] 항목이 JSON 객체가 아닙니다.")
+        return parsed, None
+    except Exception as e:
+        return None, str(e)
