@@ -55,9 +55,9 @@ def extract_srcs(html_text, base_url):
 def parse_links(data):
     try:
         if hasattr(data, "getlist"):
-            raw_list = data.getlist("links")
+            raw_list = data.getlist("portfolio")
         else:
-            raw = data.get("links", "[]")
+            raw = data.get("portfolio", "[]")
             raw_list = json.loads(raw) if isinstance(raw, str) else raw
 
         parsed = []
@@ -67,7 +67,7 @@ def parse_links(data):
             if isinstance(item, dict) and "link" in item:
                 parsed.append(item)
             else:
-                raise ValueError(f"links[{i}] 항목이 JSON 객체가 아닙니다.")
+                raise ValueError(f"portfolio[{i}] 항목이 JSON 객체가 아닙니다.")
         return parsed, None
     except Exception as e:
         return None, str(e)
