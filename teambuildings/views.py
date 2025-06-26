@@ -787,11 +787,11 @@ class TeamBuildProfileAPIView(APIView):
             )
 
         # 프로필 이미지 처리
-        if "profile_image" in request.data:
-            if request.data.get("profile_image") == "":
+        if "image" in request.data:
+            if request.data.get("image") == "":
                 profile.image = None
-            elif request.FILES.get("profile_image"):
-                profile.image = request.FILES["profile_image"]
+            elif request.FILES.get("image"):
+                profile.image = request.FILES["image"]
 
         # 각 필드 업데이트
         profile.career = request.data.get("career", profile.career)
