@@ -357,7 +357,7 @@ def teambuild_post_search(request):
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬
-    teambuild_posts = TeamBuildPost.objects.filter(query).distinct().order_by('-created_at')
+    teambuild_posts = TeamBuildPost.objects.filter(query).distinct().order_by('-create_dt')
 
     # '모집중' 체크박스 체크 시
     if request.query_params.get('status_chip') == "open":
@@ -688,19 +688,19 @@ class TeamBuildPostCommentAPIView(APIView):
 
         return permissions
 
-    def get(self, request, game_id):
+    def get(self, request, post_id):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
         # 모든 댓글 가져오기
-        comments = TeamBuildPostComment.objects.filter(game=game_id, is_visible=True)
+        comments = TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
 
         # 정렬 조건 적용
         if order == 'old':
             # 오래된 순
-            comments = comments.order_by('created_at')
+            comments = comments.order_by('create_dt')
         else:
             # 최신 순
-            comments = comments.order_by('-created_at')
+            comments = comments.order_by('-create_dt')
         
         # 페이지네이션 처리
         paginator = TeamBuildPostCommentPagination()
@@ -1108,7 +1108,7 @@ def teambuild_profile_search(request):
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬
-    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-created_at')
+    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
 
     # 필터 '현재 상태'(career) 유효성 검사 및 필터링
     career_list = request.query_params.getlist('career')

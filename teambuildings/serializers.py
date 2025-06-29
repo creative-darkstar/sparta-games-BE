@@ -105,7 +105,7 @@ class TeamBuildPostCommentSerializer(serializers.ModelSerializer):
     class Meta:
         model = TeamBuildPostComment
         fields = [
-            'id', 'author_data', 'post_id', 'content', 'is_visible', 'created_at', 'updated_at',
+            'id', 'author_data', 'post_id', 'content', 'is_visible', 'create_dt', 'update_dt',
         ]
         read_only_fields = ('is_visible', 'post', 'author',)
     
