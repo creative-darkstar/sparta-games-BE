@@ -214,17 +214,6 @@ class ProfileAPIView(APIView):
         )
 
 
-# teambuildings 앱으로 이관 예정
-# @api_view(["GET"])
-# def user_tech_list(request):
-#     techs = ROLE_CHOICES
-#     return std_response(
-#         data=techs,
-#         status="success",
-#         status_code=status.HTTP_200_OK
-#     )
-
-
 @api_view(["GET"])
 def check_nickname(request):
     # 유효성 검사 정규식 패턴

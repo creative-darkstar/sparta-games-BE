@@ -21,6 +21,7 @@ from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
 from spartagames.utils import std_response
+from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
 
 
 def generate_presigned_url(base_path, extension):
@@ -36,9 +37,9 @@ def generate_presigned_url(base_path, extension):
     
     s3 = boto3.client(
         's3',
-        aws_access_key_id=settings.AWS_S3_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_S3_SECRET_ACCESS_KEY,
-        region_name=settings.AWS_S3_REGION_NAME,
+        aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+        aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+        region_name=AWS_S3_REGION_NAME,
     )
     time_data = timezone.now().strftime("%Y%m%d%H%M%S%f")
     object_key = f'{base_path}/{time_data}_{uuid.uuid4()}.{extension}'
@@ -46,7 +47,7 @@ def generate_presigned_url(base_path, extension):
     presigned_url = s3.generate_presigned_url(
         ClientMethod='put_object',
         Params={
-            'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+            'Bucket': AWS_S3_BUCKET_NAME,
             'Key': object_key,
             'ContentType': f'{file_type}/*',
             # 'ACL': 'public-read'  # presigned로 public 업로드 허용
@@ -54,7 +55,7 @@ def generate_presigned_url(base_path, extension):
         ExpiresIn=600  # 10분간 유효
     )
     
-    real_url = f'https://{settings.AWS_S3_CUSTOM_DOMAIN}/{object_key}'
+    real_url = f'https://{AWS_S3_CUSTOM_DOMAIN}/{object_key}'
     return presigned_url, real_url
 
 
