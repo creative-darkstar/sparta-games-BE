@@ -46,7 +46,7 @@ from games.utils import validate_image
 @api_view(["GET"])
 def purpose_list(request):
     return std_response(
-        data=PURPOSE_CHOICES,
+        data=[{"label": y, "value": x} for (x, y) in PURPOSE_CHOICES],
         status="success",
         status_code=status.HTTP_200_OK
     )
@@ -55,7 +55,7 @@ def purpose_list(request):
 @api_view(["GET"])
 def duration_list(request):
     return std_response(
-        data=DURATION_CHOICES,
+        data=[{"label": y, "value": x} for (x, y) in DURATION_CHOICES],
         status="success",
         status_code=status.HTTP_200_OK
     )
@@ -64,7 +64,7 @@ def duration_list(request):
 @api_view(["GET"])
 def meeting_type_list(request):
     return std_response(
-        data=MEETING_TYPE_CHOICES,
+        data=[{"label": y, "value": x} for (x, y) in MEETING_TYPE_CHOICES],
         status="success",
         status_code=status.HTTP_200_OK
     )
