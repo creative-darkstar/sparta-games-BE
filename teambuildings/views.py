@@ -804,11 +804,8 @@ class TeamBuildPostCommentDetailAPIView(APIView):
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == comment.author or request.user.is_staff == True:
-            post_id = request.data.get('post_id')
-
-            try:
-                post = TeamBuildPost.objects.get(pk=post_id)
-            except:
+            post = comment.post
+            if not post.is_visible:
                 return std_response(
                     message="해당하는 팀빌딩 모집글이 존재하지 않습니다.",
                     status="error",
@@ -858,10 +855,8 @@ class TeamBuildPostCommentDetailAPIView(APIView):
 
         # 작성한 유저이거나 관리자일 경우 동작함
         if request.user == comment.author or request.user.is_staff == True:
-            post_id = request.data.get('post_id')
-            try:
-                post = TeamBuildPost.objects.get(pk=post_id)
-            except:
+            post = comment.post
+            if not post.is_visible:
                 return std_response(
                     message="해당하는 팀빌딩 모집글이 존재하지 않습니다.",
                     status="error",
