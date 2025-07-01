@@ -1092,8 +1092,7 @@ class CreateTeamBuildProfileAPIView(APIView):
 def teambuild_profile_search(request):
     keyword = request.query_params.get('keyword')
 
-    # 기본 필터 조건
-    query = Q(is_visible=True)
+    query = Q()
 
     # 키워드 조건 추가
     if keyword:
