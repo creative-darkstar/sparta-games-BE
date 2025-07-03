@@ -71,6 +71,15 @@ def meeting_type_list(request):
 
 
 @api_view(["GET"])
+def career_list(request):
+    return std_response(
+        data=[{"label": y, "value": x} for (x, y) in TeamBuildProfile.CAREER_CHOICES],
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
+
+
+@api_view(["GET"])
 def role_list(request):
     return std_response(
         data=list(Role.objects.all().values_list('name', flat=True).order_by("id")),

@@ -9,6 +9,7 @@ urlpatterns = [
     path("api/purpose-list/", views.purpose_list, name="purpose_list"),
     path("api/duration-list/", views.duration_list, name="duration_list"),
     path("api/meeting-type-list/", views.meeting_type_list, name="meeting_type_list"),
+    path("api/career-list/", views.career_list, name="career_list"),
     path("api/role-list/", views.role_list, name="role_list"),
     
     path("api/teambuild/", views.TeamBuildPostAPIView.as_view(), name="teambuild_post_list"),
