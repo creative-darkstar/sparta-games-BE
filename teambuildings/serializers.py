@@ -1,6 +1,5 @@
 from rest_framework import serializers
-from .models import TeamBuildPost
-from .models import TeamBuildProfile
+from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment
 
 
 class TeamBuildPostSerializer(serializers.ModelSerializer):
@@ -14,7 +13,7 @@ class TeamBuildPostSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'title', 'author_data', 'purpose',
             'duration', 'deadline', 'is_visible',
-            'status_chip', 'want_roles', 'thumbnail',
+            'status_chip', 'want_roles', 'thumbnail', 'content'
         )
         read_only_fields = ['id', 'author_data', 'is_visible', 'create_dt', 'update_dt', 'status_chip']
 
@@ -33,7 +32,8 @@ class TeamBuildPostSerializer(serializers.ModelSerializer):
     
     def get_thumbnail(self, obj):
         return obj.thumbnail.url if obj.thumbnail else None
-    
+
+
 class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
     status_chip = serializers.CharField(read_only=True)
     author_data = serializers.SerializerMethodField(read_only=True)
@@ -64,7 +64,8 @@ class TeamBuildPostDetailSerializer(serializers.ModelSerializer):
         default_path = "images/thumbnail/teambuildings/teambuilding_default.png"
         # obj.thumbnail.name 은 MEDIA_ROOT 하위 경로를 반환
         return obj.thumbnail and obj.thumbnail.name == default_path
-    
+
+
 class RecommendedTeamBuildPostSerializer(serializers.ModelSerializer):
     status_chip = serializers.CharField(read_only=True)
     author_data = serializers.SerializerMethodField(read_only=True)
@@ -96,7 +97,25 @@ class RecommendedTeamBuildPostSerializer(serializers.ModelSerializer):
     
     def get_thumbnail(self, obj):
         return obj.thumbnail.url if obj.thumbnail else None
+
+
+class TeamBuildPostCommentSerializer(serializers.ModelSerializer):
+    author_data = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = TeamBuildPostComment
+        fields = [
+            'id', 'author_data', 'post_id', 'content', 'is_visible', 'create_dt', 'update_dt',
+        ]
+        read_only_fields = ('is_visible', 'post', 'author',)
     
+    def get_author_data(self, obj):
+        return {
+            "id": obj.author.id,
+            "nickname": obj.author.nickname,
+            "image": obj.author.image.url if obj.author.image else '',
+        }
+
 
 class TeamBuildProfileSerializer(serializers.ModelSerializer):
     author_data = serializers.SerializerMethodField()

@@ -10,27 +10,73 @@ from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
 from django.contrib.contenttypes.models import ContentType
 
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated,  AllowAny  # 로그인 인증토큰
 
 from commons.models import UploadImage
-from .pagination import TeamBuildPostPagination, TeamBuildProfileListPagination
+from .pagination import (
+    TeamBuildPostPagination,
+    TeamBuildProfileListPagination,
+    TeamBuildPostCommentPagination,
+)
 from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
-from .models import TeamBuildPost, TeamBuildProfile, Role
+from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment, Role
 from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from rest_framework import status
 from spartagames.config import AWS_S3_BUCKET_IMAGES
 from spartagames.utils import std_response
 # from spartagames.settings import AWS_S3_CUSTOM_DOMAIN
-from .serializers import TeamBuildPostSerializer, TeamBuildPostDetailSerializer, RecommendedTeamBuildPostSerializer, TeamBuildProfileSerializer
+from .serializers import (
+    TeamBuildPostSerializer,
+    TeamBuildPostDetailSerializer,
+    RecommendedTeamBuildPostSerializer,
+    TeamBuildPostCommentSerializer,
+    TeamBuildProfileSerializer,
+)
 from games.models import GameCategory
 
 from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 
 from games.utils import validate_image
-# Create your views here.
+
+
+@api_view(["GET"])
+def purpose_list(request):
+    return std_response(
+        data=[{"label": y, "value": x} for (x, y) in PURPOSE_CHOICES],
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
+
+
+@api_view(["GET"])
+def duration_list(request):
+    return std_response(
+        data=[{"label": y, "value": x} for (x, y) in DURATION_CHOICES],
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
+
+
+@api_view(["GET"])
+def meeting_type_list(request):
+    return std_response(
+        data=[{"label": y, "value": x} for (x, y) in MEETING_TYPE_CHOICES],
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
+
+
+@api_view(["GET"])
+def role_list(request):
+    return std_response(
+        data=list(Role.objects.all().values_list('name', flat=True).order_by("id")),
+        status="success",
+        status_code=status.HTTP_200_OK
+    )
 
 
 class TeamBuildPostAPIView(APIView):
@@ -295,6 +341,114 @@ class TeamBuildPostAPIView(APIView):
         )
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])  # 인증이 필요할 경우 IsAuthenticated로 변경 가능
+def teambuild_post_search(request):
+    keyword = request.query_params.get('keyword')
+
+    # 기본 필터 조건
+    query = Q(is_visible=True)
+
+    # 키워드 조건 추가
+    if keyword:
+        query &= Q(
+            Q(title__icontains=keyword) |
+            Q(content__icontains=keyword)
+        )
+
+    # 검색 키워드에 맞춰 필터링 및 최신순 정렬
+    teambuild_posts = TeamBuildPost.objects.filter(query).distinct().order_by('-create_dt')
+
+    # '모집중' 체크박스 체크 시
+    if request.query_params.get('status_chip') == "open":
+        teambuild_posts = teambuild_posts.filter(deadline__gte=timezone.now().date())
+
+    # 필터 '포지션'(roles) 유효성 검사 및 필터링
+    roles_list = list(set(request.query_params.getlist('roles', None)))
+    if roles_list:
+        # 10개 초과 시 에러 반환
+        if len(roles_list) > 10:
+            return std_response(
+                message=f"역할은 최대 10개만 가능합니다.(현재 {len(roles_list)}개)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        # 유효한 Role name 목록을 DB에서 조회
+        valid_role_names = list(Role.objects.filter(
+            name__in=roles_list).values_list('name', flat=True))
+
+        # 유효하지 않은 role 코드가 포함되면 에러 반환
+        invalid_roles = [
+            role for role in roles_list if role not in valid_role_names]
+        if invalid_roles:
+            return std_response(
+                message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        teambuild_posts = teambuild_posts.filter(want_roles__name__in=roles_list).distinct()
+
+    # 필터 '프로젝트 목적'(purpose) 유효성 검사 및 필터링
+    VALID_PURPOSE_KEYS = [p[0] for p in PURPOSE_CHOICES]
+    purpose_list = request.query_params.getlist("purpose")
+    if purpose_list:
+        invalid_purpose = [
+            p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
+        if invalid_purpose:
+            return std_response(
+                message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        purpose_q = Q()
+        for p in purpose_list:
+            purpose_q |= Q(purpose=p)
+        teambuild_posts = teambuild_posts.filter(purpose_q)
+
+    # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
+    VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
+    duration_list = request.query_params.getlist("duration")
+    if duration_list:
+        invalid_duration = [
+            d for d in duration_list if d not in VALID_DURATION_KEYS]
+        if invalid_duration:
+            return std_response(
+                message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        duration_q = Q()
+        for d in duration_list:
+            duration_q |= Q(duration=d)
+        teambuild_posts = teambuild_posts.filter(duration_q)
+
+    # 페이지네이션
+    paginator = TeamBuildPostPagination()
+    paginated_teambuild_posts = paginator.paginate_queryset(teambuild_posts, request)
+    _serializer = TeamBuildPostSerializer(paginated_teambuild_posts, many=True)
+    response_data = paginator.get_paginated_response(_serializer.data).data
+
+    data = {
+        "search_teambuild_posts": response_data["results"],
+    }
+
+    return std_response(
+        data=data,
+        message="팀빌딩 모집글 - 검색 불러오기 성공했습니다.", status="success",
+        pagination={
+            "count": response_data["count"],
+            "next": response_data["next"],
+            "previous": response_data["previous"]
+        },
+        status_code=status.HTTP_200_OK
+    )
+
+
 class TeamBuildPostDetailAPIView(APIView):
     """
     PUT, DELETE일 때 로그인 인증을 위한 함수
@@ -523,6 +677,210 @@ class TeamBuildPostDetailAPIView(APIView):
             status_code=status.HTTP_200_OK
         )
 
+
+# 팀빌딩 모집글 댓글
+class TeamBuildPostCommentAPIView(APIView):
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == 'post':  # 포스트할때만 로그인
+            permissions.append(IsAuthenticated())
+
+        return permissions
+
+    def get(self, request, post_id):
+        order = request.query_params.get('order', 'new')  # 기본값 'new'
+
+        # 모든 댓글 가져오기
+        comments = TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+
+        # 정렬 조건 적용
+        if order == 'old':
+            # 오래된 순
+            comments = comments.order_by('create_dt')
+        else:
+            # 최신 순
+            comments = comments.order_by('-create_dt')
+        
+        # 페이지네이션 처리
+        paginator = TeamBuildPostCommentPagination()
+        paginated_comments = paginator.paginate_queryset(comments, request, self)
+        if paginated_comments is None:
+            return std_response(
+                message="리뷰가 없습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+            )
+
+        # 직렬화
+        serializer = TeamBuildPostCommentSerializer(paginated_comments, many=True)
+
+        # 페이징 결과 직렬화
+        response_data = paginator.get_paginated_response(serializer.data).data
+
+        return std_response(
+            data=response_data["results"],
+            status="success",
+            pagination={
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"],
+            },
+            status_code=status.HTTP_200_OK
+        )
+
+    def post(self, request, post_id):
+        try:
+            post = TeamBuildPost.objects.get(pk=post_id, is_visible=True)
+        except:
+            return std_response(
+                message="팀빌딩 모집글이 존재하지 않습니다.",
+                status="error",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+                )
+
+        serializer = TeamBuildPostCommentSerializer(data=request.data)
+        
+        if serializer.is_valid(raise_exception=True):
+            serializer.save(author=request.user, post=post)  # 데이터베이스에 저장
+            return std_response(
+                data=serializer.data,
+                status="success",
+                status_code=status.HTTP_201_CREATED
+            )
+
+        return std_response(
+            data=serializer.errors,
+            status="fail",
+            status_code=status.HTTP_400_BAD_REQUEST,
+            error_code="SERVER_FAIL"
+        )
+
+
+class TeamBuildPostCommentDetailAPIView(APIView):
+    def get_permissions(self):  # 로그인 인증토큰
+        permissions = super().get_permissions()
+
+        if self.request.method.lower() == ('put' or 'delete'):
+            permissions.append(IsAuthenticated())
+
+        return permissions
+
+    def get(self, request, comment_id):
+        try:
+        # 댓글이 존재하고, is_visible이 True인 경우만 가져옴
+            comment = TeamBuildPostComment.objects.filter(pk=comment_id, is_visible=True)
+        except comment.DoesNotExist:
+            # 댓글이 존재하지 않으면 404 응답과 함께 메시지 반환
+            return std_response(
+                message="작성한 댓글이 없습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+            )
+
+        serializer = TeamBuildPostCommentSerializer(comment)
+
+        return std_response(
+            data=serializer.data,
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
+
+    def put(self, request, comment_id):
+        try:
+            # 댓글이 존재하고, is_visible이 True인 경우에만 가져옴
+            comment = TeamBuildPostComment.objects.get(pk=comment_id, is_visible=True)
+        except:
+            # 댓글이 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return std_response(
+                message="작성한 댓글이 존재하지 않습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+            )
+
+        # 작성한 유저이거나 관리자일 경우 동작함
+        if request.user == comment.author or request.user.is_staff == True:
+            post = comment.post
+            if not post.is_visible:
+                return std_response(
+                    message="해당하는 팀빌딩 모집글이 존재하지 않습니다.",
+                    status="error",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
+                )
+        
+            serializer = TeamBuildPostCommentSerializer(
+                comment, data=request.data, partial=True
+            )
+
+            if serializer.is_valid(raise_exception=True):
+                serializer.save()
+                return std_response(
+                    data=serializer.data,
+                    status="success",
+                    status_code=status.HTTP_200_OK
+                )
+
+            return std_response(
+                data=serializer.errors,
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="SERVER_FAIL"
+            )
+        
+        else:
+            return std_response(
+                message="작성자가 아닙니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
+            )
+
+    def delete(self, request, comment_id):
+        try:
+            # 댓글이 존재하고, is_visible이 True인 경우에만 가져옴
+            comment = TeamBuildPostComment.objects.get(pk=comment_id, is_visible=True)
+        except:
+            # 댓글이 없을 경우 사용자에게 메시지와 함께 404 응답 반환
+            return std_response(
+                message="작성한 댓글이 존재하지 않습니다.",
+                status="fail",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+            )
+
+        # 작성한 유저이거나 관리자일 경우 동작함
+        if request.user == comment.author or request.user.is_staff == True:
+            post = comment.post
+            if not post.is_visible:
+                return std_response(
+                    message="해당하는 팀빌딩 모집글이 존재하지 않습니다.",
+                    status="error",
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    error_code="SERVER_FAIL"
+                )
+            
+            comment.is_visible = False
+            comment.save()
+
+            return std_response(
+                message="댓글 삭제를 완료했습니다",
+                status="success",
+                status_code=status.HTTP_200_OK
+            )
+        else:
+            return std_response(
+                message="작성자가 아닙니다",
+                status="fail",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                error_code="CLIENT_FAIL"
+            )
+
+
 class CreateTeamBuildProfileAPIView(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
 
@@ -728,7 +1086,114 @@ class CreateTeamBuildProfileAPIView(APIView):
             status_code=status.HTTP_201_CREATED
         )
 
-# Create your views here.
+
+@api_view(['GET'])
+@permission_classes([AllowAny])  # 인증이 필요할 경우 IsAuthenticated로 변경 가능
+def teambuild_profile_search(request):
+    keyword = request.query_params.get('keyword')
+
+    query = Q()
+
+    # 키워드 조건 추가
+    if keyword:
+        query &= Q(
+            Q(title__icontains=keyword) |
+            Q(content__icontains=keyword)
+        )
+
+    # 검색 키워드에 맞춰 필터링 및 최신순 정렬
+    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
+
+    # 필터 '현재 상태'(career) 유효성 검사 및 필터링
+    career_list = request.query_params.getlist('career')
+    if career_list:
+        valid_careers = [c[0] for c in TeamBuildProfile.CAREER_CHOICES]
+        invalid_careers = [c for c in career_list if c not in valid_careers]
+        if invalid_careers:
+            return std_response(
+                message=f"유효하지 않은 커리어 코드입니다: {', '.join(invalid_careers)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        teambuild_profiles = teambuild_profiles.filter(career__in=career_list)
+
+    # 필터 '포지션'(roles) 유효성 검사 및 필터링
+    role_names = request.query_params.getlist('roles')
+    if role_names:
+        if len(role_names) > 10:
+            return std_response(
+                message=f"역할은 최대 10개만 가능합니다. (현재 {len(role_names)}개)",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        valid_role_names = list(Role.objects.filter(
+            name__in=role_names).values_list('name', flat=True))
+
+        invalid_roles = [r for r in role_names if r not in valid_role_names]
+        if invalid_roles:
+            return std_response(
+                message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+
+        teambuild_profiles = teambuild_profiles.filter(my_role__name__in=role_names)
+
+    # 필터 '프로젝트 목적'(purpose) 유효성 검사 및 필터링
+    purpose_list = request.query_params.getlist('purpose')
+    if purpose_list:
+        valid_purposes = [p[0] for p in PURPOSE_CHOICES]
+        invalid_purposes = [p for p in purpose_list if p not in valid_purposes]
+        if invalid_purposes:
+            return std_response(
+                message=f"유효하지 않은 목적 코드입니다: {', '.join(invalid_purposes)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        teambuild_profiles = teambuild_profiles.filter(purpose__in=purpose_list)
+
+    # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
+    duration_list = request.query_params.getlist('duration')
+    if duration_list:
+        valid_durations = [d[0] for d in DURATION_CHOICES]
+        invalid_durations = [d for d in duration_list if d not in valid_durations]
+        if invalid_durations:
+            return std_response(
+                message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                status="fail",
+                error_code="CLIENT_FAIL",
+                status_code=status.HTTP_400_BAD_REQUEST
+            )
+        teambuild_profiles = teambuild_profiles.filter(duration__in=duration_list)
+
+    # 페이지네이션 적용
+    paginator = TeamBuildProfileListPagination()
+    paginated_teambuild_profiles = paginator.paginate_queryset(teambuild_profiles, request)
+    serializer = TeamBuildProfileSerializer(paginated_teambuild_profiles, many=True)
+    response_data = paginator.get_paginated_response(serializer.data).data
+
+    data = {
+        "search_teambuild_profiles": response_data["results"],
+    }
+
+    return std_response(
+        message="팀빌딩 프로필 - 검색 불러오기 성공했습니다.",
+        data=data,
+        status="success",
+        pagination={
+            "count": response_data["count"],
+            "next": response_data["next"],
+            "previous": response_data["previous"],
+        },
+        status_code=status.HTTP_200_OK
+    )
+
+
 class TeamBuildProfileAPIView(APIView):
     def get_permissions(self):
         permissions = super().get_permissions()
