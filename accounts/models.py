@@ -52,20 +52,6 @@ class User(AbstractUser):
     game_category = models.ManyToManyField(
         GameCategory, related_name="user_game_category"
     )
-    USER_TECH_CHOICES = (
-        ("NONE", "관심분야 없음"),
-        ("ALL", "All"),
-        ("DIR", "Director (PM/PO)"),
-        ("2DG", "2D Graphic"),
-        ("CA", "Concept Art"),
-        ("UXUI", "UX/UI"),
-        ("ART", "Artist"),
-        ("3DG", "3D Graphic"),
-        ("MDL", "Modeler"),
-        ("FE", "Frontend"),
-        ("BE", "Backend"),
-    )
-    user_tech = models.CharField(max_length=4, choices=USER_TECH_CHOICES)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['nickname']

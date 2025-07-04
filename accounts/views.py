@@ -131,7 +131,6 @@ class SignUpAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        user_tech = request.data.get("user_tech")
         is_maker = request.data.get("is_maker")
         
         login_type_list = [t[0] for t in get_user_model().LOGIN_TYPE_CHOICES]
@@ -237,7 +236,6 @@ class SignUpAPIView(APIView):
                 email = email,
                 nickname = nickname,
                 password = password,
-                user_tech = user_tech,
                 is_maker = is_maker,
                 login_type = login_type,
             )
@@ -247,7 +245,6 @@ class SignUpAPIView(APIView):
             user = get_user_model().objects.create_user(
                 email = email,
                 nickname = nickname,
-                user_tech = user_tech,
                 is_maker = is_maker,
                 login_type = login_type,
             )
@@ -261,7 +258,6 @@ class SignUpAPIView(APIView):
         #         "email":user.email,
         #         "nickname":user.nickname,
         #         "game_category": game_category,
-        #         "user_tech": user_tech,
         #         "is_maker": is_maker,
         #     },
         # }, status=status.HTTP_201_CREATED)
