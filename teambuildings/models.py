@@ -4,6 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
+from commons.views import extract_content_text
 from games.models import validate_text_content, GameCategory
 
 
@@ -67,6 +68,7 @@ class TeamBuildPost(models.Model):
     deadline = models.DateField()
     contact = models.CharField(max_length=100)
     content = models.TextField(validators=[validate_text_content])
+    content_text = models.TextField(verbose_name="only text of content", null=True, blank=True)
     is_visible = models.BooleanField(default=True)
     create_dt = models.DateTimeField(auto_now_add=True)
     update_dt = models.DateTimeField(auto_now=True)
@@ -77,6 +79,10 @@ class TeamBuildPost(models.Model):
 
     def __str__(self):
         return f"{self.title} ({self.status_chip})"
+    
+    def save(self, *args, **kwargs):
+        self.content_text = extract_content_text(self.content)
+        super().save(*args, **kwargs)
 
 
 class TeamBuildProfile(models.Model):
@@ -109,11 +115,16 @@ class TeamBuildProfile(models.Model):
     contact = models.CharField(max_length=100)
     title = models.CharField(max_length=100)
     content = models.TextField(validators=[validate_text_content])
+    content_text = models.TextField(verbose_name="only text of content", null=True, blank=True)
     create_dt = models.DateTimeField(auto_now_add=True)
     update_dt = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.title} - {self.author.nickname}"
+    
+    def save(self, *args, **kwargs):
+        self.content_text = extract_content_text(self.content)
+        super().save(*args, **kwargs)
 
 
 class TeamBuildPostComment(models.Model):

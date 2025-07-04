@@ -4,6 +4,7 @@ import re
 import uuid
 
 import boto3
+from bs4 import BeautifulSoup
 
 from django.conf import settings
 from django.core.files.storage import default_storage, FileSystemStorage
@@ -24,7 +25,8 @@ from spartagames.utils import std_response
 from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
 
 
-def generate_presigned_url(base_path, extension):
+# 업로드 용 presigned url 발급
+def generate_presigned_url_for_upload(base_path, extension):
     if extension in ['jpeg', 'png', 'gif']:
         file_type = "image"
     else:
@@ -59,14 +61,15 @@ def generate_presigned_url(base_path, extension):
     return presigned_url, real_url
 
 
+# 업로드 용 presigned url 응답
 class S3UploadPresignedUrlView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         base_path = request.data.get("base_path")
         extension = request.data.get('extension')
-        # presigned_url, image_url = generate_presigned_url(extension)
-        res = generate_presigned_url(base_path, extension)
+
+        res = generate_presigned_url_for_upload(base_path, extension)
         if isinstance(res, Response):
             return res
         presigned_url, real_url = res
@@ -81,6 +84,7 @@ class S3UploadPresignedUrlView(APIView):
         )
 
 
+# 추후 필요할 경우 수정 예정
 class LocalImageUploadView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -98,3 +102,7 @@ class LocalImageUploadView(APIView):
         image_url = os.path.join(settings.MEDIA_URL, saved_path)
         full_url = request.build_absolute_uri(image_url)
         return Response({'url': full_url})
+
+
+def extract_content_text(content):
+    return BeautifulSoup(content or "", "html.parser").get_text()
