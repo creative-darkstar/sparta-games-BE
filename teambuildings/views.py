@@ -421,12 +421,10 @@ def teambuild_post_search(request):
             )
 
         # 유효한 Role name 목록을 DB에서 조회
-        valid_role_names = list(Role.objects.filter(
-            name__in=roles_list).values_list('name', flat=True))
+        valid_role_names = list(Role.objects.filter(name__in=roles_list).values_list('name', flat=True))
 
         # 유효하지 않은 role 코드가 포함되면 에러 반환
-        invalid_roles = [
-            role for role in roles_list if role not in valid_role_names]
+        invalid_roles = [role for role in roles_list if role not in valid_role_names]
         if invalid_roles:
             return std_response(
                 message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
@@ -434,14 +432,14 @@ def teambuild_post_search(request):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+        
         teambuild_posts = teambuild_posts.filter(want_roles__name__in=roles_list).distinct()
 
     # 필터 '프로젝트 목적'(purpose) 유효성 검사 및 필터링
     VALID_PURPOSE_KEYS = [p[0] for p in PURPOSE_CHOICES]
     purpose_list = request.query_params.getlist("purpose")
     if purpose_list:
-        invalid_purpose = [
-            p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
+        invalid_purpose = [p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
         if invalid_purpose:
             return std_response(
                 message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
@@ -452,14 +450,14 @@ def teambuild_post_search(request):
         purpose_q = Q()
         for p in purpose_list:
             purpose_q |= Q(purpose=p)
+        
         teambuild_posts = teambuild_posts.filter(purpose_q)
 
     # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
     VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
     duration_list = request.query_params.getlist("duration")
     if duration_list:
-        invalid_duration = [
-            d for d in duration_list if d not in VALID_DURATION_KEYS]
+        invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
         if invalid_duration:
             return std_response(
                 message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
@@ -470,6 +468,7 @@ def teambuild_post_search(request):
         duration_q = Q()
         for d in duration_list:
             duration_q |= Q(duration=d)
+        
         teambuild_posts = teambuild_posts.filter(duration_q)
 
     # 페이지네이션
