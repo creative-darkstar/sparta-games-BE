@@ -107,8 +107,7 @@ class TeamBuildPostAPIView(APIView):
     """
 
     def get(self, request):
-        teambuildposts = TeamBuildPost.objects.filter(
-            is_visible=True).order_by('-create_dt')
+        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
         recommendedposts = TeamBuildPost.objects.filter(is_visible=True)
         user = request.user if request.user.is_authenticated else None
 
@@ -116,10 +115,12 @@ class TeamBuildPostAPIView(APIView):
         if not user or not user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
             recommendedposts = recommendedposts.filter(
-                deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+                deadline__gte=timezone.now().date()
+            ).order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
             profile = TeamBuildProfile.objects.filter(author=user).first()
+            
             if profile and user:
                 # 프로필 존재하면 직업 필터
                 my_role = profile.my_role
@@ -146,18 +147,19 @@ class TeamBuildPostAPIView(APIView):
             else:
                 # 유저 프로필이 없으면 마감 임박 4개
                 recommendedposts = recommendedposts.filter(
-                    deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+                    deadline__gte=timezone.now().date()
+                ).order_by('deadline')[:4]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
-                deadline__gte=timezone.now().date())
+                deadline__gte=timezone.now().date()
+            )
 
         # 유효한 역할코드 목록
         VALID_PURPOSE_KEYS = [p[0] for p in PURPOSE_CHOICES]
         purpose_list = request.query_params.getlist("purpose")
         if purpose_list:
-            invalid_purpose = [
-                p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
+            invalid_purpose = [p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
             if invalid_purpose:
                 return std_response(
                     message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
@@ -168,14 +170,14 @@ class TeamBuildPostAPIView(APIView):
             purpose_q = Q()
             for p in purpose_list:
                 purpose_q |= Q(purpose=p)
+            
             teambuildposts = teambuildposts.filter(purpose_q)
 
         # 유효한 기간 코드 목록
         VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
         duration_list = request.query_params.getlist("duration")
         if duration_list:
-            invalid_duration = [
-                d for d in duration_list if d not in VALID_DURATION_KEYS]
+            invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
             if invalid_duration:
                 return std_response(
                     message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
@@ -186,6 +188,7 @@ class TeamBuildPostAPIView(APIView):
             duration_q = Q()
             for d in duration_list:
                 duration_q |= Q(duration=d)
+            
             teambuildposts = teambuildposts.filter(duration_q)
 
         # 유효한 역할코드 목록
@@ -201,12 +204,10 @@ class TeamBuildPostAPIView(APIView):
                 )
 
             # 유효한 Role name 목록을 DB에서 조회
-            valid_role_names = list(Role.objects.filter(
-                name__in=roles_list).values_list('name', flat=True))
+            valid_role_names = list(Role.objects.filter(name__in=roles_list).values_list('name', flat=True))
 
             # 유효하지 않은 role 코드가 포함되면 에러 반환
-            invalid_roles = [
-                role for role in roles_list if role not in valid_role_names]
+            invalid_roles = [role for role in roles_list if role not in valid_role_names]
             if invalid_roles:
                 return std_response(
                     message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
@@ -214,8 +215,8 @@ class TeamBuildPostAPIView(APIView):
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            teambuildposts = teambuildposts.filter(
-                want_roles__name__in=roles_list).distinct()
+            
+            teambuildposts = teambuildposts.filter(want_roles__name__in=roles_list).distinct()
 
         # 페이지네이션
         paginator = TeamBuildPostPagination()
@@ -224,8 +225,7 @@ class TeamBuildPostAPIView(APIView):
         response_data = paginator.get_paginated_response(serializer.data).data
 
         # 추천 게시글 직렬화
-        recommended_serializer = RecommendedTeamBuildPostSerializer(
-            recommendedposts, many=True)
+        recommended_serializer = RecommendedTeamBuildPostSerializer(recommendedposts, many=True)
 
         # 프로필 존재 여부
         profile_exists = False
@@ -238,11 +238,17 @@ class TeamBuildPostAPIView(APIView):
             "is_profile": profile_exists
         }
 
-        return std_response(data=data,
-                            message="팀빌딩 목록 불러오기 성공했습니다.", status="success",
-                            pagination={
-                                "count": response_data["count"], "next": response_data["next"], "previous": response_data["previous"]},
-                            status_code=status.HTTP_200_OK)
+        return std_response(
+            data=data,
+            message="팀빌딩 목록 불러오기 성공했습니다.",
+            status="success",
+            pagination={
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"]
+            },
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request):
         """
@@ -251,10 +257,12 @@ class TeamBuildPostAPIView(APIView):
         user = request.user
 
         # 필수 필드 체크
-        required_fields = ["title", "want_roles", "purpose",
-                           "duration", "meeting_type", "deadline", "contact", "content"]
-        missing_fields = [
-            field for field in required_fields if not request.data.get(field)]
+        required_fields = [
+            "title",
+            "want_roles", "purpose", "duration", "meeting_type",
+            "deadline", "contact", "content"
+        ]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
 
         if missing_fields:
             return std_response(
@@ -289,7 +297,10 @@ class TeamBuildPostAPIView(APIView):
         # 선택지 유효성 검증
         for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES)]:
             is_valid, error = validate_choice(
-                request.data.get(field), choices, field)
+                value=request.data.get(field),
+                valid_choices=choices,
+                field_name=field
+            )
             if not is_valid:
                 return std_response(
                     message=error,
