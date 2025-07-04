@@ -63,7 +63,6 @@ class ProfileAPIView(APIView):
             "is_maker": user.is_maker,
             "introduce": user.introduce,
             "game_category": categories,
-            "user_tech": user.user_tech
         }
         return std_response(
             data=data,
@@ -136,9 +135,6 @@ class ProfileAPIView(APIView):
         else:
             categories = list(user.game_category.values_list('id', flat=True))
         
-        # 관심 기술분야
-        user.user_tech = self.request.data.get('user_tech', user.user_tech)
-        
         # # 이메일 검증
         # email = self.request.data.get('email', user.email)
         # # email 수정을 하지 않았을 경우 문제 없이 pass
@@ -177,7 +173,6 @@ class ProfileAPIView(APIView):
             "is_maker": user.is_maker,
             "introduce": user.introduce,
             "game_category": categories,
-            "user_tech": user.user_tech
         }
         return std_response(
             message="회원 정보 수정 완료",
@@ -218,16 +213,6 @@ class ProfileAPIView(APIView):
             status="success",
             status_code=status.HTTP_200_OK
         )
-
-
-@api_view(["GET"])
-def user_tech_list(request):
-    techs = get_user_model().USER_TECH_CHOICES
-    return std_response(
-        data=techs,
-        status="success",
-        status_code=status.HTTP_200_OK
-    )
 
 
 @api_view(["GET"])
