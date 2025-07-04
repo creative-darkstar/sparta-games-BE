@@ -2,6 +2,8 @@ import os
 import requests  # S3 사용
 import json
 
+import boto3
+
 from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Q
@@ -41,6 +43,9 @@ from django.contrib.auth import get_user_model
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 
 from games.utils import validate_image
+
+from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
+from urllib.parse import urlparse
 
 
 @api_view(["GET"])
@@ -331,15 +336,39 @@ class TeamBuildPostAPIView(APIView):
         # 역할 추가
         post.want_roles.set(Role.objects.filter(name__in=want_roles))
 
+        # S3 클라이언트 불러오기
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+            region_name=AWS_S3_REGION_NAME,
+        )
+
         # content 에서 img src 파싱
         srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
         for src in srcs:
+            # DB 등록
             UploadImage.objects.create(
                 content_type=ContentType.objects.get_for_model(post),
                 content_id=post.id,
                 uploader=user,
                 src=src,
                 is_used=True
+            )
+            
+            # S3 태깅하기
+            s3_file_key = urlparse(src).path.lstrip('/')
+            s3.put_object_tagging(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Key=s3_file_key,
+                Tagging={
+                    'TagSet': [
+                        {
+                            'Key': 'is_used',
+                            'Value': 'true'
+                        }
+                    ]
+                }
             )
 
         return std_response(
@@ -530,12 +559,27 @@ class TeamBuildPostDetailAPIView(APIView):
             old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
             new_srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
             
-            # 수정 이후 사라진 이미지에 대해 is_used=False 처리
-            for src in set(old_srcs) - set(new_srcs):
-                obj = UploadImage.objects.get(src=src)
-                obj.is_used = False
-                obj.save()
+            # S3 클라이언트 불러오기
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
             
+            # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+            delete_srcs = set(old_srcs) - set(new_srcs)
+            for src in delete_srcs:
+                obj = UploadImage.objects.get(src=src)
+                obj.delete()
+
+            s3.delete_objects(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+                }
+            )
+                
             # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
             for src in set(new_srcs) - set(old_srcs):
                 UploadImage.objects.create(
@@ -544,6 +588,21 @@ class TeamBuildPostDetailAPIView(APIView):
                     uploader=request.user,
                     src=src,
                     is_used=True
+                )
+
+                # S3 태깅하기
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [
+                            {
+                                'Key': 'is_used',
+                                'Value': 'true'
+                            }
+                        ]
+                    }
                 )
 
         # contact
@@ -645,7 +704,23 @@ class TeamBuildPostDetailAPIView(APIView):
             )
 
         # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True).update(is_used=False)
+        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
+        delete_srcs = [x.src for x in objs]
+        objs.delete()
+        # S3 클라이언트 불러오기
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+            region_name=AWS_S3_REGION_NAME,
+        )
+
+        s3.delete_objects(
+            Bucket=AWS_S3_BUCKET_NAME,
+            Delete={
+                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+            }
+        )
 
         # 팀빌딩 게시글 소프트 삭제
         post.is_visible = False
@@ -1077,6 +1152,14 @@ class CreateTeamBuildProfileAPIView(APIView):
         )
         profile.game_genre.set(game_genres)
 
+        # S3 클라이언트 불러오기
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+            region_name=AWS_S3_REGION_NAME,
+        )
+
         # content 에서 img src 파싱
         srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
         for src in srcs:
@@ -1086,6 +1169,20 @@ class CreateTeamBuildProfileAPIView(APIView):
                 uploader=author,
                 src=src,
                 is_used=True
+            )
+
+            s3_file_key = urlparse(src).path.lstrip('/')
+            s3.put_object_tagging(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Key=s3_file_key,
+                Tagging={
+                    'TagSet': [
+                        {
+                            'Key': 'is_used',
+                            'Value': 'true'
+                        }
+                    ]
+                }
             )
 
         return std_response(
@@ -1301,11 +1398,26 @@ class TeamBuildProfileAPIView(APIView):
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
         new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
         
+        # S3 클라이언트 불러오기
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+            region_name=AWS_S3_REGION_NAME,
+        )
+        
         # 수정 이후 사라진 이미지에 대해 is_used=False 처리
-        for src in set(old_srcs) - set(new_srcs):
+        delete_srcs = set(old_srcs) - set(new_srcs)
+        for src in delete_srcs:
             obj = UploadImage.objects.get(src=src)
-            obj.is_used = False
-            obj.save()
+            obj.delete()
+
+        s3.delete_objects(
+            Bucket=AWS_S3_BUCKET_NAME,
+            Delete={
+                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+            }
+        )
         
         # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
         for src in set(new_srcs) - set(old_srcs):
@@ -1315,6 +1427,21 @@ class TeamBuildProfileAPIView(APIView):
                 uploader=request.user,
                 src=src,
                 is_used=True
+            )
+
+            # S3 태깅하기
+            s3_file_key = urlparse(src).path.lstrip('/')
+            s3.put_object_tagging(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Key=s3_file_key,
+                Tagging={
+                    'TagSet': [
+                        {
+                            'Key': 'is_used',
+                            'Value': 'true'
+                        }
+                    ]
+                }
             )
 
         profile.save()
@@ -1348,8 +1475,25 @@ class TeamBuildProfileAPIView(APIView):
             )
 
         # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True).update(is_used=False)
+        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
         
+        delete_srcs = [x.src for x in objs]
+        objs.delete()
+        # S3 클라이언트 불러오기
+        s3 = boto3.client(
+            's3',
+            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+            region_name=AWS_S3_REGION_NAME,
+        )
+
+        s3.delete_objects(
+            Bucket=AWS_S3_BUCKET_NAME,
+            Delete={
+                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+            }
+        )
+
         profile.delete()
         return std_response(
             message="팀빌딩 프로필 삭제 완료",

@@ -52,9 +52,10 @@ def generate_presigned_url_for_upload(base_path, extension):
             'Bucket': AWS_S3_BUCKET_NAME,
             'Key': object_key,
             'ContentType': f'{file_type}/*',
+            'Tagging': 'is_used=false',
             # 'ACL': 'public-read'  # presigned로 public 업로드 허용
         },
-        ExpiresIn=600  # 10분간 유효
+        ExpiresIn=600,  # 10분간 유효
     )
     
     real_url = f'https://{AWS_S3_CUSTOM_DOMAIN}/{object_key}'
