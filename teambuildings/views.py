@@ -524,9 +524,9 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-        serilizer = TeamBuildPostDetailSerializer(post).data
+        
         return std_response(
-            data=serilizer,
+            data=TeamBuildPostDetailSerializer(post).data,
             message="팀빌딩 게시글 상세조회 성공하였습니다.",
             status="success",
             status_code=status.HTTP_200_OK
@@ -546,6 +546,7 @@ class TeamBuildPostDetailAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_403_FORBIDDEN
             )
+        
         data = request.data
         changes = []
 
@@ -573,43 +574,45 @@ class TeamBuildPostDetailAPIView(APIView):
                 region_name=AWS_S3_REGION_NAME,
             )
             
-            # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+            # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
             delete_srcs = set(old_srcs) - set(new_srcs)
-            for src in delete_srcs:
-                obj = UploadImage.objects.get(src=src)
-                obj.delete()
-
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                }
-            )
-                
-            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
-            for src in set(new_srcs) - set(old_srcs):
-                UploadImage.objects.create(
-                    content_type=ContentType.objects.get_for_model(post),
-                    content_id=post.id,
-                    uploader=request.user,
-                    src=src,
-                    is_used=True
-                )
-
-                # S3 태깅하기
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
+            if delete_srcs:
+                # DB 데이터 삭제
+                for src in delete_srcs:
+                    obj = UploadImage.objects.get(src=src)
+                    obj.delete()
+                # S3 오브젝트 삭제
+                s3.delete_objects(
                     Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [
-                            {
-                                'Key': 'is_used',
-                                'Value': 'true'
-                            }
-                        ]
+                    Delete={
+                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
                     }
                 )
+                
+            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
+            add_srcs = set(new_srcs) - set(old_srcs)
+            if add_srcs:
+                # DB 데이터 추가
+                _add_file_data = [
+                    UploadImage(
+                        content_type=ContentType.objects.get_for_model(post),
+                        content_id=post.id,
+                        uploader=request.user,
+                        src=x,
+                        is_used=True
+                    ) for x in add_srcs
+                ]
+                UploadImage.objects.bulk_create(_add_file_data)
+                # S3 오브젝트 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    s3.put_object_tagging(
+                        Bucket=AWS_S3_BUCKET_NAME,
+                        Key=s3_file_key,
+                        Tagging={
+                            'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
+                        }
+                    )
 
         # contact
         contact = data.get("contact", post.contact)
@@ -633,14 +636,14 @@ class TeamBuildPostDetailAPIView(APIView):
             changes.append("thumbnail")
 
         # 선택지 유효성 검증 (필드 변경 시만 적용)
-        for field, choices in [
-            ("purpose", PURPOSE_CHOICES),
-            ("duration", DURATION_CHOICES),
-            ("meeting_type", MEETING_TYPE_CHOICES),
-        ]:
+        for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES),]:
             value = data.get(field)
             if value and value != getattr(post, field):
-                is_valid, error = validate_choice(value, choices, field)
+                is_valid, error = validate_choice(
+                    value=value,
+                    valid_choices=choices,
+                    field_name=field
+                )
                 if not is_valid:
                     return std_response(
                         message=error,
@@ -686,7 +689,10 @@ class TeamBuildPostDetailAPIView(APIView):
             post.save()
 
         return std_response(
-            data={"post_id": post.id, "changes": changes},
+            data={
+                "post_id": post.id,
+                "changes": changes
+            },
             message="팀빌딩 게시글이 수정되었습니다.",
             status="success",
             status_code=status.HTTP_200_OK
@@ -699,7 +705,6 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-
         # 권한 확인
         if request.user != post.author and not request.user.is_staff:
             return std_response(
@@ -709,24 +714,29 @@ class TeamBuildPostDetailAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
-        delete_srcs = [x.src for x in objs]
-        objs.delete()
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
+        srcs = [x.src for x in rows]
+        
+        if rows and srcs:
+            # DB 데이터 삭제
+            rows.delete()
+            
+            # S3 오브젝트 삭제
+            # S3 클라이언트 불러오기
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 삭제
+            s3.delete_objects(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
+                }
+            )
 
         # 팀빌딩 게시글 소프트 삭제
         post.is_visible = False
@@ -746,7 +756,6 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-
         # 권한 확인
         if request.user != post.author:
             return std_response(
