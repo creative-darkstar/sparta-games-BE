@@ -362,7 +362,7 @@ def teambuild_post_search(request):
     if keyword:
         query &= Q(
             Q(title__icontains=keyword) |
-            Q(content__icontains=keyword)
+            Q(content_text__icontains=keyword)
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬
@@ -1107,7 +1107,7 @@ def teambuild_profile_search(request):
     if keyword:
         query &= Q(
             Q(title__icontains=keyword) |
-            Q(content__icontains=keyword)
+            Q(content_text__icontains=keyword)
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬

@@ -105,4 +105,13 @@ class LocalImageUploadView(APIView):
 
 
 def extract_content_text(content):
-    return BeautifulSoup(content or "", "html.parser").get_text()
+    raw_text = BeautifulSoup(content or "", "html.parser").get_text()
+    
+    # 이스케이프 문자 -> 공백으로 치환
+    clean_text = raw_text.replace('\xa0', ' ')
+    clean_text = re.sub(r'[\n\r\t]+', ' ', clean_text)
+    
+    # 여러 공백 -> 단일 공백
+    clean_text = re.sub(r'\s+', ' ', clean_text)
+    
+    return clean_text.strip()
