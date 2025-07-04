@@ -1,35 +1,32 @@
+from datetime import datetime, timedelta
+import json
 import os
 import requests  # S3 사용
-import json
+from urllib.parse import urlparse
 
 import boto3
 
-from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Q
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
+from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny  # 로그인 인증토큰
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated,  AllowAny  # 로그인 인증토큰
 
-from commons.models import UploadImage
+from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment, Role
+from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from .pagination import (
     TeamBuildPostPagination,
     TeamBuildProfileListPagination,
     TeamBuildPostCommentPagination,
 )
-from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
-from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment, Role
-from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
-from rest_framework import status
-from spartagames.config import AWS_S3_BUCKET_IMAGES
-from spartagames.utils import std_response
-# from spartagames.settings import AWS_S3_CUSTOM_DOMAIN
 from .serializers import (
     TeamBuildPostSerializer,
     TeamBuildPostDetailSerializer,
@@ -37,15 +34,14 @@ from .serializers import (
     TeamBuildPostCommentSerializer,
     TeamBuildProfileSerializer,
 )
+from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
+
 from games.models import GameCategory
-
-from django.contrib.auth import get_user_model
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
-
 from games.utils import validate_image
 
 from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
-from urllib.parse import urlparse
+from spartagames.utils import std_response
+from commons.models import UploadImage
 
 
 @api_view(["GET"])
