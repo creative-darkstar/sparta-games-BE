@@ -1333,7 +1333,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         try:
             profile = TeamBuildProfile.objects.get(author=user)
         except TeamBuildProfile.DoesNotExist:
@@ -1344,10 +1343,9 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        serializer = TeamBuildProfileSerializer(profile)
         return std_response(
             message="팀빌딩 프로필 조회 성공",
-            data=serializer.data,
+            data=TeamBuildProfileSerializer(profile).data,
             status="success",
             status_code=status.HTTP_200_OK
         )
@@ -1363,7 +1361,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         if request.user != profile.author:
             return std_response(
                 message="권한이 없습니다.",
@@ -1409,6 +1406,7 @@ class TeamBuildProfileAPIView(APIView):
             )
         profile.portfolio = portfolio
         
+        # 이미지 처리
         # content 에서 img src 파싱
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
         new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
@@ -1421,43 +1419,45 @@ class TeamBuildProfileAPIView(APIView):
             region_name=AWS_S3_REGION_NAME,
         )
         
-        # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+        # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
         delete_srcs = set(old_srcs) - set(new_srcs)
-        for src in delete_srcs:
-            obj = UploadImage.objects.get(src=src)
-            obj.delete()
-
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
-        
-        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
-        for src in set(new_srcs) - set(old_srcs):
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(profile),
-                content_id=profile.id,
-                uploader=request.user,
-                src=src,
-                is_used=True
-            )
-
-            # S3 태깅하기
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
+        if delete_srcs:
+            # DB 데이터 삭제
+            for src in delete_srcs:
+                obj = UploadImage.objects.get(src=src)
+                obj.delete()
+            # S3 오브젝트 삭제
+            s3.delete_objects(
                 Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
                 }
             )
+        
+        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
+        add_srcs = set(new_srcs) - set(old_srcs)
+        if add_srcs:
+            # DB 데이터 추가
+            _add_file_data = [
+                UploadImage(
+                    content_type=ContentType.objects.get_for_model(profile),
+                    content_id=profile.id,
+                    uploader=request.user,
+                    src=x,
+                    is_used=True
+                ) for x in add_srcs
+            ]
+            UploadImage.objects.bulk_create(_add_file_data)
+            # S3 오브젝트 태깅
+            for src in set(new_srcs) - set(old_srcs):
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
+                    }
+                )
 
         profile.save()
 
@@ -1480,7 +1480,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         if request.user != profile.author:
             return std_response(
                 message="권한이 없습니다.",
@@ -1489,27 +1488,33 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
+        srcs = [x.src for x in rows]
         
-        delete_srcs = [x.src for x in objs]
-        objs.delete()
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
+        if rows and srcs:
+            # DB 데이터 삭제
+            rows.delete()
+            
+            # S3 오브젝트 삭제
+            # S3 클라이언트 불러오기
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 삭제
+            s3.delete_objects(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
+                }
+            )
 
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
-
+        # 팀빌딩 프로필 완전 삭제
         profile.delete()
+        
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
             status="success",
