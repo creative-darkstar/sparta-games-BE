@@ -1,35 +1,32 @@
+from datetime import datetime, timedelta
+import json
 import os
 import requests  # S3 사용
-import json
+from urllib.parse import urlparse
 
 import boto3
 
-from datetime import datetime, timedelta
 from django.utils import timezone
 from django.db.models import Q
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
+from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 
+from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated, IsAuthenticatedOrReadOnly, AllowAny  # 로그인 인증토큰
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated,  AllowAny  # 로그인 인증토큰
 
-from commons.models import UploadImage
+from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment, Role
+from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
 from .pagination import (
     TeamBuildPostPagination,
     TeamBuildProfileListPagination,
     TeamBuildPostCommentPagination,
 )
-from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
-from .models import TeamBuildPost, TeamBuildProfile, TeamBuildPostComment, Role
-from .models import PURPOSE_CHOICES, DURATION_CHOICES, MEETING_TYPE_CHOICES
-from rest_framework import status
-from spartagames.config import AWS_S3_BUCKET_IMAGES
-from spartagames.utils import std_response
-# from spartagames.settings import AWS_S3_CUSTOM_DOMAIN
 from .serializers import (
     TeamBuildPostSerializer,
     TeamBuildPostDetailSerializer,
@@ -37,15 +34,14 @@ from .serializers import (
     TeamBuildPostCommentSerializer,
     TeamBuildProfileSerializer,
 )
+from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
+
 from games.models import GameCategory
-
-from django.contrib.auth import get_user_model
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
-
 from games.utils import validate_image
 
 from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
-from urllib.parse import urlparse
+from spartagames.utils import std_response
+from commons.models import UploadImage
 
 
 @api_view(["GET"])
@@ -111,8 +107,7 @@ class TeamBuildPostAPIView(APIView):
     """
 
     def get(self, request):
-        teambuildposts = TeamBuildPost.objects.filter(
-            is_visible=True).order_by('-create_dt')
+        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
         recommendedposts = TeamBuildPost.objects.filter(is_visible=True)
         user = request.user if request.user.is_authenticated else None
 
@@ -120,10 +115,12 @@ class TeamBuildPostAPIView(APIView):
         if not user or not user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
             recommendedposts = recommendedposts.filter(
-                deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+                deadline__gte=timezone.now().date()
+            ).order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
             profile = TeamBuildProfile.objects.filter(author=user).first()
+            
             if profile and user:
                 # 프로필 존재하면 직업 필터
                 my_role = profile.my_role
@@ -150,18 +147,19 @@ class TeamBuildPostAPIView(APIView):
             else:
                 # 유저 프로필이 없으면 마감 임박 4개
                 recommendedposts = recommendedposts.filter(
-                    deadline__gte=timezone.now().date()).order_by('deadline')[:4]
+                    deadline__gte=timezone.now().date()
+                ).order_by('deadline')[:4]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
-                deadline__gte=timezone.now().date())
+                deadline__gte=timezone.now().date()
+            )
 
         # 유효한 역할코드 목록
         VALID_PURPOSE_KEYS = [p[0] for p in PURPOSE_CHOICES]
         purpose_list = request.query_params.getlist("purpose")
         if purpose_list:
-            invalid_purpose = [
-                p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
+            invalid_purpose = [p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
             if invalid_purpose:
                 return std_response(
                     message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
@@ -172,14 +170,14 @@ class TeamBuildPostAPIView(APIView):
             purpose_q = Q()
             for p in purpose_list:
                 purpose_q |= Q(purpose=p)
+            
             teambuildposts = teambuildposts.filter(purpose_q)
 
         # 유효한 기간 코드 목록
         VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
         duration_list = request.query_params.getlist("duration")
         if duration_list:
-            invalid_duration = [
-                d for d in duration_list if d not in VALID_DURATION_KEYS]
+            invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
             if invalid_duration:
                 return std_response(
                     message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
@@ -190,6 +188,7 @@ class TeamBuildPostAPIView(APIView):
             duration_q = Q()
             for d in duration_list:
                 duration_q |= Q(duration=d)
+            
             teambuildposts = teambuildposts.filter(duration_q)
 
         # 유효한 역할코드 목록
@@ -205,12 +204,10 @@ class TeamBuildPostAPIView(APIView):
                 )
 
             # 유효한 Role name 목록을 DB에서 조회
-            valid_role_names = list(Role.objects.filter(
-                name__in=roles_list).values_list('name', flat=True))
+            valid_role_names = list(Role.objects.filter(name__in=roles_list).values_list('name', flat=True))
 
             # 유효하지 않은 role 코드가 포함되면 에러 반환
-            invalid_roles = [
-                role for role in roles_list if role not in valid_role_names]
+            invalid_roles = [role for role in roles_list if role not in valid_role_names]
             if invalid_roles:
                 return std_response(
                     message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
@@ -218,8 +215,8 @@ class TeamBuildPostAPIView(APIView):
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            teambuildposts = teambuildposts.filter(
-                want_roles__name__in=roles_list).distinct()
+            
+            teambuildposts = teambuildposts.filter(want_roles__name__in=roles_list).distinct()
 
         # 페이지네이션
         paginator = TeamBuildPostPagination()
@@ -228,8 +225,7 @@ class TeamBuildPostAPIView(APIView):
         response_data = paginator.get_paginated_response(serializer.data).data
 
         # 추천 게시글 직렬화
-        recommended_serializer = RecommendedTeamBuildPostSerializer(
-            recommendedposts, many=True)
+        recommended_serializer = RecommendedTeamBuildPostSerializer(recommendedposts, many=True)
 
         # 프로필 존재 여부
         profile_exists = False
@@ -242,11 +238,17 @@ class TeamBuildPostAPIView(APIView):
             "is_profile": profile_exists
         }
 
-        return std_response(data=data,
-                            message="팀빌딩 목록 불러오기 성공했습니다.", status="success",
-                            pagination={
-                                "count": response_data["count"], "next": response_data["next"], "previous": response_data["previous"]},
-                            status_code=status.HTTP_200_OK)
+        return std_response(
+            data=data,
+            message="팀빌딩 목록 불러오기 성공했습니다.",
+            status="success",
+            pagination={
+                "count": response_data["count"],
+                "next": response_data["next"],
+                "previous": response_data["previous"]
+            },
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request):
         """
@@ -255,10 +257,12 @@ class TeamBuildPostAPIView(APIView):
         user = request.user
 
         # 필수 필드 체크
-        required_fields = ["title", "want_roles", "purpose",
-                           "duration", "meeting_type", "deadline", "contact", "content"]
-        missing_fields = [
-            field for field in required_fields if not request.data.get(field)]
+        required_fields = [
+            "title",
+            "want_roles", "purpose", "duration", "meeting_type",
+            "deadline", "contact", "content"
+        ]
+        missing_fields = [field for field in required_fields if not request.data.get(field)]
 
         if missing_fields:
             return std_response(
@@ -293,7 +297,10 @@ class TeamBuildPostAPIView(APIView):
         # 선택지 유효성 검증
         for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES)]:
             is_valid, error = validate_choice(
-                request.data.get(field), choices, field)
+                value=request.data.get(field),
+                valid_choices=choices,
+                field_name=field
+            )
             if not is_valid:
                 return std_response(
                     message=error,
@@ -414,12 +421,10 @@ def teambuild_post_search(request):
             )
 
         # 유효한 Role name 목록을 DB에서 조회
-        valid_role_names = list(Role.objects.filter(
-            name__in=roles_list).values_list('name', flat=True))
+        valid_role_names = list(Role.objects.filter(name__in=roles_list).values_list('name', flat=True))
 
         # 유효하지 않은 role 코드가 포함되면 에러 반환
-        invalid_roles = [
-            role for role in roles_list if role not in valid_role_names]
+        invalid_roles = [role for role in roles_list if role not in valid_role_names]
         if invalid_roles:
             return std_response(
                 message=f"유효하지 않은 역할 코드: {', '.join(invalid_roles)}",
@@ -427,14 +432,14 @@ def teambuild_post_search(request):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
+        
         teambuild_posts = teambuild_posts.filter(want_roles__name__in=roles_list).distinct()
 
     # 필터 '프로젝트 목적'(purpose) 유효성 검사 및 필터링
     VALID_PURPOSE_KEYS = [p[0] for p in PURPOSE_CHOICES]
     purpose_list = request.query_params.getlist("purpose")
     if purpose_list:
-        invalid_purpose = [
-            p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
+        invalid_purpose = [p for p in purpose_list if p not in VALID_PURPOSE_KEYS]
         if invalid_purpose:
             return std_response(
                 message=f"유효하지 않은 프로젝트 목적 코드입니다: {', '.join(invalid_purpose)} (PORTFOLIO, CONTEST, STUDY, COMMERCIAL 중 하나)",
@@ -445,14 +450,14 @@ def teambuild_post_search(request):
         purpose_q = Q()
         for p in purpose_list:
             purpose_q |= Q(purpose=p)
+        
         teambuild_posts = teambuild_posts.filter(purpose_q)
 
     # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
     VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
     duration_list = request.query_params.getlist("duration")
     if duration_list:
-        invalid_duration = [
-            d for d in duration_list if d not in VALID_DURATION_KEYS]
+        invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
         if invalid_duration:
             return std_response(
                 message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
@@ -463,6 +468,7 @@ def teambuild_post_search(request):
         duration_q = Q()
         for d in duration_list:
             duration_q |= Q(duration=d)
+        
         teambuild_posts = teambuild_posts.filter(duration_q)
 
     # 페이지네이션
@@ -518,9 +524,9 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-        serilizer = TeamBuildPostDetailSerializer(post).data
+        
         return std_response(
-            data=serilizer,
+            data=TeamBuildPostDetailSerializer(post).data,
             message="팀빌딩 게시글 상세조회 성공하였습니다.",
             status="success",
             status_code=status.HTTP_200_OK
@@ -540,6 +546,7 @@ class TeamBuildPostDetailAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_403_FORBIDDEN
             )
+        
         data = request.data
         changes = []
 
@@ -567,43 +574,45 @@ class TeamBuildPostDetailAPIView(APIView):
                 region_name=AWS_S3_REGION_NAME,
             )
             
-            # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+            # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
             delete_srcs = set(old_srcs) - set(new_srcs)
-            for src in delete_srcs:
-                obj = UploadImage.objects.get(src=src)
-                obj.delete()
-
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                }
-            )
-                
-            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
-            for src in set(new_srcs) - set(old_srcs):
-                UploadImage.objects.create(
-                    content_type=ContentType.objects.get_for_model(post),
-                    content_id=post.id,
-                    uploader=request.user,
-                    src=src,
-                    is_used=True
-                )
-
-                # S3 태깅하기
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
+            if delete_srcs:
+                # DB 데이터 삭제
+                for src in delete_srcs:
+                    obj = UploadImage.objects.get(src=src)
+                    obj.delete()
+                # S3 오브젝트 삭제
+                s3.delete_objects(
                     Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [
-                            {
-                                'Key': 'is_used',
-                                'Value': 'true'
-                            }
-                        ]
+                    Delete={
+                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
                     }
                 )
+                
+            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
+            add_srcs = set(new_srcs) - set(old_srcs)
+            if add_srcs:
+                # DB 데이터 추가
+                _add_file_data = [
+                    UploadImage(
+                        content_type=ContentType.objects.get_for_model(post),
+                        content_id=post.id,
+                        uploader=request.user,
+                        src=x,
+                        is_used=True
+                    ) for x in add_srcs
+                ]
+                UploadImage.objects.bulk_create(_add_file_data)
+                # S3 오브젝트 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    s3.put_object_tagging(
+                        Bucket=AWS_S3_BUCKET_NAME,
+                        Key=s3_file_key,
+                        Tagging={
+                            'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
+                        }
+                    )
 
         # contact
         contact = data.get("contact", post.contact)
@@ -627,14 +636,14 @@ class TeamBuildPostDetailAPIView(APIView):
             changes.append("thumbnail")
 
         # 선택지 유효성 검증 (필드 변경 시만 적용)
-        for field, choices in [
-            ("purpose", PURPOSE_CHOICES),
-            ("duration", DURATION_CHOICES),
-            ("meeting_type", MEETING_TYPE_CHOICES),
-        ]:
+        for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES),]:
             value = data.get(field)
             if value and value != getattr(post, field):
-                is_valid, error = validate_choice(value, choices, field)
+                is_valid, error = validate_choice(
+                    value=value,
+                    valid_choices=choices,
+                    field_name=field
+                )
                 if not is_valid:
                     return std_response(
                         message=error,
@@ -680,7 +689,10 @@ class TeamBuildPostDetailAPIView(APIView):
             post.save()
 
         return std_response(
-            data={"post_id": post.id, "changes": changes},
+            data={
+                "post_id": post.id,
+                "changes": changes
+            },
             message="팀빌딩 게시글이 수정되었습니다.",
             status="success",
             status_code=status.HTTP_200_OK
@@ -693,7 +705,6 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-
         # 권한 확인
         if request.user != post.author and not request.user.is_staff:
             return std_response(
@@ -703,24 +714,29 @@ class TeamBuildPostDetailAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
-        delete_srcs = [x.src for x in objs]
-        objs.delete()
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
+        srcs = [x.src for x in rows]
+        
+        if rows and srcs:
+            # DB 데이터 삭제
+            rows.delete()
+            
+            # S3 오브젝트 삭제
+            # S3 클라이언트 불러오기
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 삭제
+            s3.delete_objects(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
+                }
+            )
 
         # 팀빌딩 게시글 소프트 삭제
         post.is_visible = False
@@ -740,7 +756,6 @@ class TeamBuildPostDetailAPIView(APIView):
         post = self.get_object(post_id)
         if isinstance(post, Response):
             return post
-
         # 권한 확인
         if request.user != post.author:
             return std_response(
@@ -1318,7 +1333,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         try:
             profile = TeamBuildProfile.objects.get(author=user)
         except TeamBuildProfile.DoesNotExist:
@@ -1329,10 +1343,9 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_404_NOT_FOUND
             )
 
-        serializer = TeamBuildProfileSerializer(profile)
         return std_response(
             message="팀빌딩 프로필 조회 성공",
-            data=serializer.data,
+            data=TeamBuildProfileSerializer(profile).data,
             status="success",
             status_code=status.HTTP_200_OK
         )
@@ -1348,7 +1361,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         if request.user != profile.author:
             return std_response(
                 message="권한이 없습니다.",
@@ -1394,6 +1406,7 @@ class TeamBuildProfileAPIView(APIView):
             )
         profile.portfolio = portfolio
         
+        # 이미지 처리
         # content 에서 img src 파싱
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
         new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
@@ -1406,43 +1419,45 @@ class TeamBuildProfileAPIView(APIView):
             region_name=AWS_S3_REGION_NAME,
         )
         
-        # 수정 이후 사라진 이미지에 대해 is_used=False 처리
+        # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
         delete_srcs = set(old_srcs) - set(new_srcs)
-        for src in delete_srcs:
-            obj = UploadImage.objects.get(src=src)
-            obj.delete()
-
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
-        
-        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가
-        for src in set(new_srcs) - set(old_srcs):
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(profile),
-                content_id=profile.id,
-                uploader=request.user,
-                src=src,
-                is_used=True
-            )
-
-            # S3 태깅하기
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
+        if delete_srcs:
+            # DB 데이터 삭제
+            for src in delete_srcs:
+                obj = UploadImage.objects.get(src=src)
+                obj.delete()
+            # S3 오브젝트 삭제
+            s3.delete_objects(
                 Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
                 }
             )
+        
+        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
+        add_srcs = set(new_srcs) - set(old_srcs)
+        if add_srcs:
+            # DB 데이터 추가
+            _add_file_data = [
+                UploadImage(
+                    content_type=ContentType.objects.get_for_model(profile),
+                    content_id=profile.id,
+                    uploader=request.user,
+                    src=x,
+                    is_used=True
+                ) for x in add_srcs
+            ]
+            UploadImage.objects.bulk_create(_add_file_data)
+            # S3 오브젝트 태깅
+            for src in set(new_srcs) - set(old_srcs):
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
+                    }
+                )
 
         profile.save()
 
@@ -1465,7 +1480,6 @@ class TeamBuildProfileAPIView(APIView):
                 error_code="SERVER_FAIL",
                 status_code=status.HTTP_404_NOT_FOUND
             )
-
         if request.user != profile.author:
             return std_response(
                 message="권한이 없습니다.",
@@ -1474,27 +1488,33 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해 is_used=False 처리
-        objs=UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
+        srcs = [x.src for x in rows]
         
-        delete_srcs = [x.src for x in objs]
-        objs.delete()
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
+        if rows and srcs:
+            # DB 데이터 삭제
+            rows.delete()
+            
+            # S3 오브젝트 삭제
+            # S3 클라이언트 불러오기
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 삭제
+            s3.delete_objects(
+                Bucket=AWS_S3_BUCKET_NAME,
+                Delete={
+                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
+                }
+            )
 
-        s3.delete_objects(
-            Bucket=AWS_S3_BUCKET_NAME,
-            Delete={
-                'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-            }
-        )
-
+        # 팀빌딩 프로필 완전 삭제
         profile.delete()
+        
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
             status="success",
