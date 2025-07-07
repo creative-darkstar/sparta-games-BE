@@ -78,7 +78,7 @@ class RecommendedTeamBuildPostSerializer(serializers.ModelSerializer):
             'id', 'title', 'author_data', 'purpose',
             'duration', 'deadline', 'is_visible',
             'status_chip', 'want_roles', 'thumbnail',
-            'content',
+            'content_text',     # 추천 리스트 불러올 때는 html의 text 값만 가져오도록 수정
         )
         read_only_fields = ['id', 'author_data', 'is_visible', 'create_dt', 'update_dt', 'status_chip']
 
