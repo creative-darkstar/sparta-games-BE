@@ -149,9 +149,9 @@ class TeamBuildPostAPIView(APIView):
                 if curr_cnt < 4:
                     # 마감 임박 팀빌딩 모집글 리스트
                     # 맞춤 팀빌딩 모집글에 있는 경우 제외 (.exclude(pk__in=[row.pk for row in _qs]))
-                    # (4 - 맞춤 팀빌딩 모집글 개수) 개수만큼 가져옴 ([:4 - curr_cnt])
                     # 마감 임박 팀빌딩 모집글 리스트는 본래 마감기한 순으로 정렬됨 (.order_by('deadline'))
-                    _extra_qs = recommendedposts.exclude(pk__in=[row.pk for row in _qs])[:4 - curr_cnt].order_by('deadline')
+                    # (4 - 맞춤 팀빌딩 모집글 개수) 개수만큼 가져옴 ([:4 - curr_cnt])
+                    _extra_qs = recommendedposts.exclude(pk__in=[row.pk for row in _qs]).order_by('deadline')[:4 - curr_cnt]
                     # 최종적으로 4개로 제한 (이중 체크)
                     recommendedposts = (_qs | _extra_qs)[:4]
                 else:
