@@ -108,15 +108,14 @@ class TeamBuildPostAPIView(APIView):
 
     def get(self, request):
         teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
-        recommendedposts = TeamBuildPost.objects.filter(is_visible=True)
+        # 마감하지 않은 것만 추천하도록 조건 추가
+        recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
         user = request.user if request.user.is_authenticated else None
 
         # 추천게시글/마감임박 게시글
         if not user or not user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
-            recommendedposts = recommendedposts.filter(
-                deadline__gte=timezone.now().date()
-            ).order_by('deadline')[:4]
+            recommendedposts = recommendedposts.order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
             profile = TeamBuildProfile.objects.filter(author=user).first()
@@ -139,16 +138,27 @@ class TeamBuildPostAPIView(APIView):
                     if order <= DURATION_ORDER.get(duration, 4)
                 ]
 
-                recommendedposts = recommendedposts.filter(
+                _qs = recommendedposts.filter(
                     want_roles=my_role,
                     purpose=purpose,
-                    duration__in=valid_duration
+                    duration__in=valid_duration,
                 ).order_by('-create_dt')[:4]
+                
+                # 맞춤 팀빌딩 모집글 개수가 4개 미만인 경우, 마감 임박 글을 추가하도록 수정
+                curr_cnt = _qs.count()
+                if curr_cnt < 4:
+                    # 마감 임박 팀빌딩 모집글 리스트
+                    # 맞춤 팀빌딩 모집글에 있는 경우 제외 (.exclude(pk__in=[row.pk for row in _qs]))
+                    # (4 - 맞춤 팀빌딩 모집글 개수) 개수만큼 가져옴 ([:4 - curr_cnt])
+                    # 마감 임박 팀빌딩 모집글 리스트는 본래 마감기한 순으로 정렬됨 (.order_by('deadline'))
+                    _extra_qs = recommendedposts.exclude(pk__in=[row.pk for row in _qs])[:4 - curr_cnt].order_by('deadline')
+                    # 최종적으로 4개로 제한 (이중 체크)
+                    recommendedposts = (_qs | _extra_qs)[:4]
+                else:
+                    recommendedposts = _qs
             else:
                 # 유저 프로필이 없으면 마감 임박 4개
-                recommendedposts = recommendedposts.filter(
-                    deadline__gte=timezone.now().date()
-                ).order_by('deadline')[:4]
+                recommendedposts = recommendedposts.order_by('deadline')[:4]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
