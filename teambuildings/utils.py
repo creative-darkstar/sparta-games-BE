@@ -71,3 +71,15 @@ def parse_links(data):
         return parsed, None
     except Exception as e:
         return None, str(e)
+
+def get_valid_duration_keys(base_duration: str):
+        DURATION_ORDER = {
+            "3M": 1,
+            "6M": 2,
+            "1Y": 3,
+            "GT1Y": 4,
+        }
+        return [
+            key for key, order in DURATION_ORDER.items()
+            if order <= DURATION_ORDER.get(base_duration, 4)
+        ]
