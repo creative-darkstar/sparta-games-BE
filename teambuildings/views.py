@@ -34,7 +34,7 @@ from .serializers import (
     TeamBuildPostCommentSerializer,
     TeamBuildProfileSerializer,
 )
-from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
+from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links, get_valid_duration_keys
 
 from games.models import GameCategory
 from games.utils import validate_image
@@ -110,33 +110,22 @@ class TeamBuildPostAPIView(APIView):
         teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
         # 마감하지 않은 것만 추천하도록 조건 추가
         recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
-        user = request.user if request.user.is_authenticated else None
 
         # 추천게시글/마감임박 게시글
-        if not user or not user.is_authenticated:
+        if not request.user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
             recommendedposts = recommendedposts.order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
-            profile = TeamBuildProfile.objects.filter(author=user).first()
+            profile = TeamBuildProfile.objects.filter(author=request.user).first()
             
-            if profile and user:
+            if profile:
                 # 프로필 존재하면 직업 필터
                 my_role = profile.my_role
                 purpose = profile.purpose
                 duration = profile.duration
 
-                DURATION_ORDER = {
-                    "3M": 1,
-                    "6M": 2,
-                    "1Y": 3,
-                    "GT1Y": 4,
-                }
-
-                valid_duration = [
-                    key for key, order in DURATION_ORDER.items()
-                    if order <= DURATION_ORDER.get(duration, 4)
-                ]
+                valid_duration = get_valid_duration_keys(duration)
 
                 _qs = recommendedposts.filter(
                     want_roles=my_role,
@@ -185,21 +174,17 @@ class TeamBuildPostAPIView(APIView):
 
         # 유효한 기간 코드 목록
         VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
-        duration_list = request.query_params.getlist("duration")
-        if duration_list:
-            invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
-            if invalid_duration:
+        duration = request.query_params.get("duration")
+        if duration:
+            if duration not in VALID_DURATION_KEYS:
                 return std_response(
-                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                     status="fail",
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            duration_q = Q()
-            for d in duration_list:
-                duration_q |= Q(duration=d)
-            
-            teambuildposts = teambuildposts.filter(duration_q)
+            valid_durations = get_valid_duration_keys(duration)
+            teambuildposts = teambuildposts.filter(duration__in=valid_durations)
 
         # 유효한 역할코드 목록
         roles_list = list(set(request.query_params.getlist('roles', None)))
