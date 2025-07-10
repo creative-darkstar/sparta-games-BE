@@ -995,7 +995,8 @@ class CreateTeamBuildProfileAPIView(APIView):
 
     # 팀빌딩 프로필 목록 호출
     def get(self, request):
-        profiles = TeamBuildProfile.objects.order_by('-create_dt')
+        # profiles = TeamBuildProfile.objects.order_by('-create_dt')
+        profiles = TeamBuildProfile.objects.order_by('-update_dt')
 
         # 필터: career
         career_list = request.query_params.getlist('career')
@@ -1233,7 +1234,8 @@ def teambuild_profile_search(request):
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬
-    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
+    # teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
+    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-update_dt')
 
     # 필터 '현재 상태'(career) 유효성 검사 및 필터링
     career_list = request.query_params.getlist('career')
