@@ -1008,18 +1008,18 @@ class CreateTeamBuildProfileAPIView(APIView):
             profiles = profiles.filter(purpose__in=purpose_list)
 
         # 필터: duration
-        duration_list = request.query_params.getlist('duration')
-        if duration_list:
+        duration = request.query_params.get('duration')
+        if duration:
             valid_durations = [d[0] for d in DURATION_CHOICES]
-            invalid_durations = [d for d in duration_list if d not in valid_durations]
-            if invalid_durations:
+            if duration not in valid_durations:
                 return std_response(
-                    message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                    message=f"유효하지 않은 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                     status="fail",
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            profiles = profiles.filter(duration__in=duration_list)
+            valid_durations = get_valid_duration_keys(duration)
+            profiles = profiles.filter(duration__in=valid_durations)
 
         # 필터: roles
         role_names = request.query_params.getlist('roles')
