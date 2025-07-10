@@ -450,21 +450,17 @@ def teambuild_post_search(request):
 
     # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
     VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
-    duration_list = request.query_params.getlist("duration")
-    if duration_list:
-        invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
-        if invalid_duration:
+    duration = request.query_params.get("duration")
+    if duration:
+        if duration not in VALID_DURATION_KEYS:
             return std_response(
-                message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                message=f"유효하지 않은 프로젝트 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        duration_q = Q()
-        for d in duration_list:
-            duration_q |= Q(duration=d)
-        
-        teambuild_posts = teambuild_posts.filter(duration_q)
+        valid_durations = get_valid_duration_keys(duration)
+        teambuild_posts = teambuild_posts.filter(duration__in=valid_durations)
 
     # 페이지네이션
     paginator = TeamBuildPostPagination()
