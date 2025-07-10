@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import boto3
 
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
@@ -107,7 +107,15 @@ class TeamBuildPostAPIView(APIView):
     """
 
     def get(self, request):
-        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
+        today = timezone.now().date()
+
+        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).annotate(
+            is_open_priority=Case(
+                When(deadline__gte=today, then=Value(0)),
+                default= Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by('is_open_priority', '-create_dt')
         # 마감하지 않은 것만 추천하도록 조건 추가
         recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
 
