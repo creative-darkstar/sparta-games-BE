@@ -2,6 +2,8 @@ import re
 
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404, render
+from django.utils import timezone
+
 from rest_framework import status
 from rest_framework.decorators import api_view, renderer_classes
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
@@ -20,6 +22,9 @@ from games.models import (
     GameCategory,
 )
 from games.serializers import GameListSerializer
+from teambuildings.models import TeamBuildPost
+from teambuildings.pagination import MyTeamBuildPostPagination
+from teambuildings.serializers import TeamBuildPostSerializer
 from qnas.models import DeleteUsers
 
 
@@ -682,6 +687,51 @@ def recently_played_games(request, user_id):
             status="success",
             status_code=status.HTTP_204_NO_CONTENT
         )
+
+
+@api_view(["GET"])
+def teambuild_posts(request, user_id):
+    try:
+        user = get_user_model().objects.get(pk=user_id, is_active=True)
+    except get_user_model().DoesNotExist:
+        return std_response(
+            message="회원정보가 존재하지 않습니다.",
+            status="error",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
+    teambuild_posts = TeamBuildPost.objects.filter(author=user, is_visible=True).distinct().order_by('-create_dt')
+    if not teambuild_posts.exists():
+        return std_response(
+            data={},
+            message=f"{request.user}가 작성한 팀빌딩 모집글이 없습니다.",
+            status="success",
+            status_code=status.HTTP_204_NO_CONTENT
+        )
+    # 다른 사람의 프로필을 조회하는 경우, '모집중' 상태의 글만 보이도록 필터링
+    if user != request.user:
+        teambuild_posts = teambuild_posts.filter(deadline__gte=timezone.now().date())
+
+    # 페이지네이션
+    paginator = MyTeamBuildPostPagination()
+    paginated_teambuild_posts = paginator.paginate_queryset(teambuild_posts, request)
+    _serializer = TeamBuildPostSerializer(paginated_teambuild_posts, many=True)
+    response_data = paginator.get_paginated_response(_serializer.data).data
+
+    data = {
+        "teambuild_posts": response_data["results"],
+    }
+
+    return std_response(
+        data=data,
+        message="유저 팀빌딩 목록 불러오기 성공했습니다.", status="success",
+        pagination={
+            "count": response_data["count"],
+            "next": response_data["next"],
+            "previous": response_data["previous"]
+        },
+        status_code=status.HTTP_200_OK
+    )
 
 
 # ---------- Web---------- #
