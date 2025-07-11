@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 import boto3
 
 from django.utils import timezone
-from django.db.models import Q
+from django.db.models import Q, Case, When, Value, IntegerField
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
 from django.core.files.base import ContentFile  # S3 사용
@@ -34,7 +34,7 @@ from .serializers import (
     TeamBuildPostCommentSerializer,
     TeamBuildProfileSerializer,
 )
-from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links
+from .utils import validate_want_roles, validate_choice, extract_srcs, parse_links, get_valid_duration_keys
 
 from games.models import GameCategory
 from games.utils import validate_image
@@ -107,36 +107,33 @@ class TeamBuildPostAPIView(APIView):
     """
 
     def get(self, request):
-        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).order_by('-create_dt')
+        today = timezone.now().date()
+
+        teambuildposts = TeamBuildPost.objects.filter(is_visible=True).annotate(
+            is_open_priority=Case(
+                When(deadline__gte=today, then=Value(0)),
+                default= Value(1),
+                output_field=IntegerField()
+            )
+        ).order_by('is_open_priority', '-create_dt')
         # 마감하지 않은 것만 추천하도록 조건 추가
         recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
-        user = request.user if request.user.is_authenticated else None
 
         # 추천게시글/마감임박 게시글
-        if not user or not user.is_authenticated:
+        if not request.user.is_authenticated:
             # 비회원 유저 : 마감 임박 4개
             recommendedposts = recommendedposts.order_by('deadline')[:4]
         else:
             # 유저 프로필 존재 여부 확인
-            profile = TeamBuildProfile.objects.filter(author=user).first()
+            profile = TeamBuildProfile.objects.filter(author=request.user).first()
             
-            if profile and user:
+            if profile:
                 # 프로필 존재하면 직업 필터
                 my_role = profile.my_role
                 purpose = profile.purpose
                 duration = profile.duration
 
-                DURATION_ORDER = {
-                    "3M": 1,
-                    "6M": 2,
-                    "1Y": 3,
-                    "GT1Y": 4,
-                }
-
-                valid_duration = [
-                    key for key, order in DURATION_ORDER.items()
-                    if order <= DURATION_ORDER.get(duration, 4)
-                ]
+                valid_duration = get_valid_duration_keys(duration)
 
                 _qs = recommendedposts.filter(
                     want_roles=my_role,
@@ -185,21 +182,17 @@ class TeamBuildPostAPIView(APIView):
 
         # 유효한 기간 코드 목록
         VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
-        duration_list = request.query_params.getlist("duration")
-        if duration_list:
-            invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
-            if invalid_duration:
+        duration = request.query_params.get("duration")
+        if duration:
+            if duration not in VALID_DURATION_KEYS:
                 return std_response(
-                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                    message=f"유효하지 않은 프로젝트 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                     status="fail",
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            duration_q = Q()
-            for d in duration_list:
-                duration_q |= Q(duration=d)
-            
-            teambuildposts = teambuildposts.filter(duration_q)
+            valid_durations = get_valid_duration_keys(duration)
+            teambuildposts = teambuildposts.filter(duration__in=valid_durations)
 
         # 유효한 역할코드 목록
         roles_list = list(set(request.query_params.getlist('roles', None)))
@@ -465,21 +458,17 @@ def teambuild_post_search(request):
 
     # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
     VALID_DURATION_KEYS = [d[0] for d in DURATION_CHOICES]
-    duration_list = request.query_params.getlist("duration")
-    if duration_list:
-        invalid_duration = [d for d in duration_list if d not in VALID_DURATION_KEYS]
-        if invalid_duration:
+    duration = request.query_params.get("duration")
+    if duration:
+        if duration not in VALID_DURATION_KEYS:
             return std_response(
-                message=f"유효하지 않은 프로젝트 기간 코드입니다: {', '.join(invalid_duration)} (3M, 6M, 1Y, GT1Y 중 하나)",
+                message=f"유효하지 않은 프로젝트 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        duration_q = Q()
-        for d in duration_list:
-            duration_q |= Q(duration=d)
-        
-        teambuild_posts = teambuild_posts.filter(duration_q)
+        valid_durations = get_valid_duration_keys(duration)
+        teambuild_posts = teambuild_posts.filter(duration__in=valid_durations)
 
     # 페이지네이션
     paginator = TeamBuildPostPagination()
@@ -995,7 +984,8 @@ class CreateTeamBuildProfileAPIView(APIView):
 
     # 팀빌딩 프로필 목록 호출
     def get(self, request):
-        profiles = TeamBuildProfile.objects.order_by('-create_dt')
+        # profiles = TeamBuildProfile.objects.order_by('-create_dt')
+        profiles = TeamBuildProfile.objects.order_by('-update_dt')
 
         # 필터: career
         career_list = request.query_params.getlist('career')
@@ -1026,18 +1016,18 @@ class CreateTeamBuildProfileAPIView(APIView):
             profiles = profiles.filter(purpose__in=purpose_list)
 
         # 필터: duration
-        duration_list = request.query_params.getlist('duration')
-        if duration_list:
+        duration = request.query_params.get('duration')
+        if duration:
             valid_durations = [d[0] for d in DURATION_CHOICES]
-            invalid_durations = [d for d in duration_list if d not in valid_durations]
-            if invalid_durations:
+            if duration not in valid_durations:
                 return std_response(
-                    message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                    message=f"유효하지 않은 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                     status="fail",
                     error_code="CLIENT_FAIL",
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
-            profiles = profiles.filter(duration__in=duration_list)
+            valid_durations = get_valid_duration_keys(duration)
+            profiles = profiles.filter(duration__in=valid_durations)
 
         # 필터: roles
         role_names = request.query_params.getlist('roles')
@@ -1233,7 +1223,8 @@ def teambuild_profile_search(request):
         )
 
     # 검색 키워드에 맞춰 필터링 및 최신순 정렬
-    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
+    # teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-create_dt')
+    teambuild_profiles = TeamBuildProfile.objects.filter(query).distinct().order_by('-update_dt')
 
     # 필터 '현재 상태'(career) 유효성 검사 및 필터링
     career_list = request.query_params.getlist('career')
@@ -1289,18 +1280,18 @@ def teambuild_profile_search(request):
         teambuild_profiles = teambuild_profiles.filter(purpose__in=purpose_list)
 
     # 필터 '프로젝트 기간'(duration) 유효성 검사 및 필터링
-    duration_list = request.query_params.getlist('duration')
-    if duration_list:
+    duration = request.query_params.get('duration')
+    if duration:
         valid_durations = [d[0] for d in DURATION_CHOICES]
-        invalid_durations = [d for d in duration_list if d not in valid_durations]
-        if invalid_durations:
+        if duration not in valid_durations:
             return std_response(
-                message=f"유효하지 않은 기간 코드입니다: {', '.join(invalid_durations)}",
+                message=f"유효하지 않은 기간 코드입니다: {duration} (3M, 6M, 1Y, GT1Y 중 하나)",
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        teambuild_profiles = teambuild_profiles.filter(duration__in=duration_list)
+        valid_durations = get_valid_duration_keys(duration)
+        teambuild_profiles = teambuild_profiles.filter(duration__in=valid_durations)
 
     # 페이지네이션 적용
     paginator = TeamBuildProfileListPagination()
