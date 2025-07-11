@@ -15,6 +15,7 @@ urlpatterns = [
     path("api/<int:user_id>/likes/", views.like_games, name="like_games"),
     path("api/<int:user_id>/gamepacks/", views.gamepacks, name="gamepacks"),    # 2024-12-30 유저 페이지 게임팩 API 복구
     path("api/<int:user_id>/recent/", views.recently_played_games, name="recent_played_games"),
+    path("api/<int:user_id>/teambuildposts/", views.teambuild_posts, name="teambuild_posts"),
     # ---------- Web---------- #
     # path("<int:user_pk>/", views.profile_page, name='profile_page'),
 ]
