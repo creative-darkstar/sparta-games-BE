@@ -236,7 +236,7 @@ class TeamBuildPostAPIView(APIView):
             profile_exists = TeamBuildProfile.objects.filter(author=request.user).exists()
 
         data = {
-            "team_build_posts": response_data["results"],
+            "teambuild_posts": response_data["results"],
             "recommended_posts": recommended_serializer.data,
             "is_profile": profile_exists
         }
