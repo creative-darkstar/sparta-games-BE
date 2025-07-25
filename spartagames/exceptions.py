@@ -1,3 +1,4 @@
+from rest_framework.exceptions import APIException
 from rest_framework.views import exception_handler
 from .utils import std_response
 
@@ -5,11 +6,16 @@ def custom_exception_handler(exc, context):
     response = exception_handler(exc, context)
 
     if response is not None:
+        if hasattr(exc, "default_code"):
+            error_code = exc.default_code
+        else:
+            error_code = "THIRD_FAIL"
+        
         return std_response(
             data=None,
             message=response.data.get("detail", "에러 발생"),
             status="error",
-            error_code=response.status_code,
+            error_code=error_code,
             status_code=response.status_code
         )
 
@@ -17,9 +23,15 @@ def custom_exception_handler(exc, context):
         data=None,
         message=str(exc),
         status="error",
-        error_code="SERVER_ERROR",
+        error_code="SERVER_FAIL",
         status_code=500
     )
+
+
+class DiscordAlertException(APIException):
+    status_code = 400
+    default_detail = "Discord 알림 실패"
+    default_code = "THIRD_FAIL"
 
 
 # def _handle_drf_exception(self, exception):
