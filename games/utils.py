@@ -1,8 +1,13 @@
+from PIL import Image
+import requests
+import zipfile
+
 from django.db.models import Avg
 from .models import Chip
 
-from PIL import Image
-import zipfile
+from spartagames.config import DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
+from spartagames.exceptions import DiscordAlertException
+
 
 def validate_image(image):
     """
@@ -63,3 +68,23 @@ def assign_chip_based_on_difficulty(game):
         game.chip.add(hard_chip)
     else:
         game.chip.add(normal_chip)
+
+
+def send_discord_notification(game):
+    webhook_url = DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
+
+    message = {
+        "content": f"📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"
+                   f"🎮 게임명: {game.title}\n"
+                   f"👤 업로더: {game.maker.nickname}\n"
+    }
+
+    try:
+        resp = requests.post(webhook_url, json=message)
+        # resp.raise_for_status()
+    except Exception as e:
+        # logger 도입하는대로 해당 코드 라인은 살릴 예정
+        # 지금은 print 처리
+        # raise DiscordAlertException
+        # 실패 시 로깅 처리
+        print(f"Discord 알림 실패: {e}")

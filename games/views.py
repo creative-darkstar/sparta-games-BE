@@ -42,7 +42,7 @@ from spartagames.utils import std_response
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file
+from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
 
 class GameListAPIView(APIView):
     """
@@ -235,6 +235,9 @@ class GameListAPIView(APIView):
             game = game,
             content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
         )
+        
+        # 디스코드 알림
+        send_discord_notification(game)
         
         return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
