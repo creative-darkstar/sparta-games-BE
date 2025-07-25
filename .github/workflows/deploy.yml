@@ -49,7 +49,7 @@ jobs:
 
   cd:
     name: Deploy to EC2 (main push only)
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && contains(fromJSON('["push", "pull_request"]'), github.event_name)
     runs-on: ubuntu-latest
 
     steps:
