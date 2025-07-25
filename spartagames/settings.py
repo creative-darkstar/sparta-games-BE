@@ -86,6 +86,9 @@ MIDDLEWARE = [
     
     # Add the account middleware:
     "allauth.account.middleware.AccountMiddleware",
+    
+    # 가장 마지막에 처리되어야할 미들웨어
+    'spartagames.custom_middleware.DRFStandardResponseMiddleware',
 ]
 
 X_FRAME_OPTIONS = 'SAMEORIGIN'
@@ -221,6 +224,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'spartagames.pagination.CustomPagination',
     'PAGE_SIZE': 20,
+    "EXCEPTION_HANDLER": "spartagames.exceptions.custom_exception_handler",
 }
 
 # DRF JWT setting
