@@ -249,6 +249,9 @@ def game_register_logs_all(request, game_id):
     )
 
 
+#-------------------------------#
+# Deprecated APIView (20250730) #
+#-------------------------------#
 @api_view(['POST'])
 # @permission_classes([IsAuthenticated])
 def game_register(request, game_id):
@@ -425,6 +428,39 @@ def game_register(request, game_id):
         status="success",
         status_code=status.HTTP_202_ACCEPTED
     )
+
+
+from .tasks import game_register_task
+
+@api_view(["POST"])
+def game_register_v2(request, game_id):
+    task = game_register_task.delay(game_id)
+    
+    # # 게임 등록 로그에 데이터 추가
+    # row.logs_game.create(
+    #     recoder = request.user,
+    #     maker = row.maker,
+    #     game = row,
+    #     content = f"승인 (기록자: {request.user.email}, 제작자: {row.maker.email})",
+    # )
+    
+    return Response({
+        "message": "게임 등록을 시작했습니다.",
+        "task_id": task.id,
+    }, status=status.HTTP_202_ACCEPTED)
+
+
+from celery.result import AsyncResult
+
+@api_view(["GET"])
+def get_task_status(request, task_id):
+    result = AsyncResult(task_id)
+
+    return Response({
+        "task_id": task_id,
+        "status": result.status,  # PENDING, STARTED, SUCCESS, FAILURE
+        "result": result.result if result.successful() else None,
+    })
 
 
 @api_view(['POST'])
