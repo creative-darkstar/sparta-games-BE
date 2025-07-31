@@ -11,7 +11,7 @@ app = Celery('spartagames')
 app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Django 앱에서 tasks.py 파일을 자동으로 찾아 Celery에 태스크로 등록
-app.autodiscover_tasks()
+app.autodiscover_tasks(['qnas', 'games', 'accounts'])
 
 # 기본 디버그 태스크
 @app.task(bind=True)
