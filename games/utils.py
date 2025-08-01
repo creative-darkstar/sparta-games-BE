@@ -70,13 +70,15 @@ def assign_chip_based_on_difficulty(game):
         game.chip.add(normal_chip)
 
 
-def send_discord_notification(game):
+def send_discord_notification(game, msg_text="📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"):
     webhook_url = DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
 
     message = {
-        "content": f"📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"
-                   f"🎮 게임명: {game.title}\n"
-                   f"👤 업로더: {game.maker.nickname}\n"
+        "content": f"""
+{msg_text}
+🎮 게임명: {game.title}\n"
+👤 업로더: {game.maker.nickname}\n
+"""
     }
 
     try:
