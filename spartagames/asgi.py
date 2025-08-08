@@ -9,8 +9,25 @@ https://docs.djangoproject.com/en/4.2/howto/deployment/asgi/
 
 import os
 
-from django.core.asgi import get_asgi_application
+from channels.routing import ProtocolTypeRouter, URLRouter
+from channels.auth import AuthMiddlewareStack
+
+# from django.core.asgi import get_asgi_application
+
+import spartagames.routing
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'spartagames.settings')
 
-application = get_asgi_application()
+# application = get_asgi_application()
+
+# django_asgi_app = get_asgi_application()
+
+application = ProtocolTypeRouter({
+    # "http": django_asgi_app,
+    # WebSocket 연결 라우팅을 여기에 추가
+    "websocket": AuthMiddlewareStack(
+        URLRouter(
+            spartagames.routing.websocket_urlpatterns
+        )
+    ),
+})
