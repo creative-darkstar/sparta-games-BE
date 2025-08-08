@@ -78,7 +78,8 @@ jobs:
         EOF
 
     - name: Notify to Discord
-      if: success() || failure()
+      # if: success() || failure()
+      if: always()
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_GIT_DEPLOY_URL }}
       run: |
@@ -98,34 +99,80 @@ jobs:
         COMMIT_MSG="${{ github.event.head_commit.message }}"
         SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
 
-        curl -H "Content-Type: application/json" \
-            -X POST \
-            -d "{
-              \"embeds\": [{
-                \"title\": \"$ICON CD 배포 결과 ($STATUS)\",
-                \"description\": \"**[$REPO]** 브랜치 \`$BRANCH\` 에 배포되었습니다.\",
-                \"color\": $COLOR,
-                \"fields\": [
-                  {
-                    \"name\": \"👤 배포자\",
-                    \"value\": \"$ACTOR\",
-                    \"inline\": true
-                  },
-                  {
-                    \"name\": \"🕒 배포 시간 (UTC)\",
-                    \"value\": \"$DEPLOY_TIME\",
-                    \"inline\": true
-                  },
-                  {
-                    \"name\": \"💬 커밋 메시지\",
-                    \"value\": \"$COMMIT_MSG\"
-                  },
-                  {
-                    \"name\": \"🔗 커밋 링크\",
-                    \"value\": \"https://github.com/$REPO/commit/$COMMIT_SHA\"
-                  }
-                ],
-                \"timestamp\": \"$DEPLOY_TIME\"
-              }]
-            }" \
-            "$DISCORD_WEBHOOK_URL"
+        jq -n --arg icon "$ICON" \
+              --arg status "$STATUS" \
+              --arg repo "$REPO" \
+              --arg branch "$BRANCH" \
+              --arg actor "$ACTOR" \
+              --arg time "$DEPLOY_TIME" \
+              --arg msg "$COMMIT_MSG" \
+              --arg sha "$COMMIT_SHA" \
+              --arg color "$COLOR" \
+              '{
+            embeds: [{
+              title: "\($icon) CD 배포 결과 (\($status))",
+              description: "**[\($repo)]** 브랜치 `\($branch)` 에 배포되었습니다.",
+              color: ($color|tonumber),
+              fields: [
+                { name: "👤 배포자", value: $actor, inline: true },
+                { name: "🕒 배포 시간 (UTC)", value: $time, inline: true },
+                { name: "💬 커밋 메시지", value: $msg },
+                { name: "🔗 커밋 링크", value: "https://github.com/\($repo)/commit/\($sha)" }
+              ],
+              timestamp: $time
+            }]
+          }' | curl -H "Content-Type: application/json" -X POST -d @- "$DISCORD_WEBHOOK_URL"
+
+
+    # - name: Notify to Discord
+    #   if: success() || failure()
+    #   env:
+    #     DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_GIT_DEPLOY_URL }}
+    #   run: |
+    #     STATUS="${{ job.status }}"
+    #     COLOR="3066993"  # 성공: 파랑
+    #     ICON="✅"
+    #     if [ "$STATUS" != "success" ]; then
+    #       COLOR="15158332"  # 실패: 빨강
+    #       ICON="❌"
+    #     fi
+
+    #     DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    #     ACTOR="${{ github.actor }}"
+    #     BRANCH="${GITHUB_REF#refs/heads/}"
+    #     REPO="${{ github.repository }}"
+    #     COMMIT_SHA="${{ github.sha }}"
+    #     COMMIT_MSG="${{ github.event.head_commit.message }}"
+    #     SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
+
+    #     curl -H "Content-Type: application/json" \
+    #         -X POST \
+    #         -d "{
+    #           \"embeds\": [{
+    #             \"title\": \"$ICON CD 배포 결과 ($STATUS)\",
+    #             \"description\": \"**[$REPO]** 브랜치 \`$BRANCH\` 에 배포되었습니다.\",
+    #             \"color\": $COLOR,
+    #             \"fields\": [
+    #               {
+    #                 \"name\": \"👤 배포자\",
+    #                 \"value\": \"$ACTOR\",
+    #                 \"inline\": true
+    #               },
+    #               {
+    #                 \"name\": \"🕒 배포 시간 (UTC)\",
+    #                 \"value\": \"$DEPLOY_TIME\",
+    #                 \"inline\": true
+    #               },
+    #               {
+    #                 \"name\": \"💬 커밋 메시지\",
+    #                 \"value\": \"$COMMIT_MSG\"
+    #               },
+    #               {
+    #                 \"name\": \"🔗 커밋 링크\",
+    #                 \"value\": \"https://github.com/$REPO/commit/$COMMIT_SHA\"
+    #               }
+    #             ],
+    #             \"timestamp\": \"$DEPLOY_TIME\"
+    #           }]
+    #         }" \
+    #         "$DISCORD_WEBHOOK_URL"
