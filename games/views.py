@@ -242,7 +242,7 @@ class GameListAPIView(APIView):
         # 디스코드 알림
         send_discord_notification(game)
 
-        # 검수요청 페이지 알림
+        # 페이지 알림
         notif = create_notification(
             user=request.user,
             noti_type=Notification.NotificationType.GAME_UPLOAD,
@@ -518,9 +518,17 @@ class GameDetailAPIView(APIView):
                 content=log_content,
             )
         
-        # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림
+        # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
         if game.register_state == 0:
             send_discord_notification(game, msg_text=f"📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n")
+            
+            notif = create_notification(
+                user=request.user,
+                noti_type=Notification.NotificationType.GAME_UPLOAD,
+                noti_sub_type=NotificationSubType.REGISTER_REQUEST,
+                related_object=game,
+                game_title=game.title
+            )
         
         return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
