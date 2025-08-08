@@ -22,6 +22,8 @@ from .serializers import (
 from games.models import (
     Game,
 )
+from commons.models import Notification
+from commons.utils import NotificationSubType, create_notification
 from spartagames.utils import std_response
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -356,6 +358,15 @@ def game_register(request, game_id):
         game = row,
         content = f"승인 (기록자: {request.user.email}, 제작자: {row.maker.email})",
     )
+
+    # 페이지 알림
+    notif = create_notification(
+        user=request.user,
+        noti_type=Notification.NotificationType.GAME_UPLOAD,
+        noti_sub_type=NotificationSubType.REGISTER_APPROVE,
+        related_object=row,
+        game_title=row.title
+    )
     
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)
     # return redirect("games:admin_list")
@@ -399,6 +410,15 @@ def game_register_deny(request, game_id):
         maker=game.maker,
         game=game,
         content=request.data.get("content")
+    )
+
+    # 페이지 알림
+    notif = create_notification(
+        user=request.user,
+        noti_type=Notification.NotificationType.GAME_UPLOAD,
+        noti_sub_type=NotificationSubType.REGISTER_REJECT,
+        related_object=game,
+        game_title=game.title
     )
 
     # 2024-10-31 추가. return 수정 필요 (redirect -> response)

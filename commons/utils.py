@@ -43,7 +43,7 @@ def create_notification(user, noti_type, noti_sub_type, related_object=None, gam
     notif = Notification.objects.create(
         user=user,
         noti_type=noti_type,
-        message=f"[{noti_sub_type}] {message}",
+        message=message,
         content_type=content_type,
         content_id=content_id
     )
