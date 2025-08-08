@@ -142,7 +142,7 @@ CHANNEL_LAYERS = {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
             "hosts": [('127.0.0.1', 6379)],  # Redis 서버 주소
-            "db": 1,  # <-- 1번 데이터베이스 사용
+            # "db": 1,  # <-- 1번 데이터베이스 사용
         },
     },
 }

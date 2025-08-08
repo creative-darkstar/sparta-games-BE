@@ -1,5 +1,6 @@
 import re
 
+from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.db.models import Q, Count
@@ -42,6 +43,9 @@ from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
 from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
+from commons.models import Notification
+from commons.utils import NotificationSubType, create_notification
+
 
 class GameListAPIView(APIView):
     """
@@ -237,6 +241,15 @@ class GameListAPIView(APIView):
         
         # 디스코드 알림
         send_discord_notification(game)
+
+        # 검수요청 페이지 알림
+        notif = create_notification(
+            user=request.user,
+            noti_type=Notification.NotificationType.GAME_UPLOAD,
+            noti_sub_type=NotificationSubType.REGISTER_REQUEST,
+            related_object=game,
+            game_title=game.title
+        )
         
         return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
@@ -437,6 +450,9 @@ class GameDetailAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             if thumbnail != game.thumbnail:
+                # 기존 파일 s3에서 삭제
+                default_storage.delete(game.thumbnail.name)
+                # request로 받은 파일로 교체
                 game.thumbnail = thumbnail
                 changes.append("thumbnail")
 
@@ -473,8 +489,10 @@ class GameDetailAPIView(APIView):
         # 기존 스크린샷 유지 또는 삭제
         old_screenshots = self.request.data.getlist('old_screenshots', [])
         old_screenshots = [int(pk) for pk in old_screenshots]
-        Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots).delete()
-        
+        for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
+            default_storage.delete(item.src.name)
+            item.delete()
+
         # 새로운 스크린샷 업로드
         # 스크린샷 검증
         screenshots = self.request.FILES.getlist("new_screenshots")
