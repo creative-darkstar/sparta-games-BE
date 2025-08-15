@@ -72,7 +72,7 @@ jobs:
           pip install -r requirements.txt
           python manage.py migrate --noinput
           python manage.py collectstatic --noinput
-          supervisorctl restart all
+          sudo supervisorctl restart all
           sudo systemctl restart gunicorn
           sudo systemctl restart nginx
         EOF
