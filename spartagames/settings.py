@@ -29,7 +29,7 @@ OPEN_API_KEY = config.OPENAI_API_KEY
 DEBUG = True
 
 ALLOWED_HOSTS = [
-    '13.209.74.174',
+    config.AWS_MAIN_SERVER["main_address"],
     'localhost',
     '127.0.0.1',
 ]
