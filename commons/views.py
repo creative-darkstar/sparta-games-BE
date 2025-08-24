@@ -25,8 +25,44 @@ from spartagames.utils import std_response
 from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
 
 
-# 업로드 용 presigned url 발급
-def generate_presigned_url_for_upload(base_path, extension):
+# zip 업로드 용 presigned url 발급
+def generate_presigned_url_for_zip_upload(base_path, filename, extension):
+    if extension not in ['zip']:
+        return std_response(
+            message="지원하는 확장자가 아닙니다. 'zip' 파일을 올려주십시오.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+    
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+        aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+        region_name=AWS_S3_REGION_NAME,
+    )
+
+    time_data = timezone.now().strftime("%Y%m%d%H%M%S%f")
+    object_key = f'{base_path}/{time_data}_{filename}.{extension}'
+    
+    presigned_url = s3.generate_presigned_url(
+        ClientMethod='put_object',
+        Params={
+            'Bucket': AWS_S3_BUCKET_NAME,
+            'Key': object_key,
+            'ContentType': "application/zip",
+            'Tagging': 'is_used=false',
+            # 'ACL': 'public-read'  # presigned로 public 업로드 허용
+        },
+        ExpiresIn=600,  # 10분간 유효
+    )
+    
+    real_url = f'https://{AWS_S3_CUSTOM_DOMAIN}/{object_key}'
+    return presigned_url, real_url
+
+
+# 이미지 업로드 용 presigned url 발급
+def generate_presigned_url_for_img_upload(base_path, extension):
     if extension in ['jpeg', 'png', 'gif']:
         file_type = "image"
     else:
@@ -62,15 +98,39 @@ def generate_presigned_url_for_upload(base_path, extension):
     return presigned_url, real_url
 
 
-# 업로드 용 presigned url 응답
-class S3UploadPresignedUrlView(APIView):
+# 이미지 업로드 용 presigned url 응답
+class S3ImageUploadPresignedUrlView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         base_path = request.data.get("base_path")
         extension = request.data.get('extension')
 
-        res = generate_presigned_url_for_upload(base_path, extension)
+        res = generate_presigned_url_for_img_upload(base_path, extension)
+        if isinstance(res, Response):
+            return res
+        presigned_url, real_url = res
+        
+        return std_response(
+            status="success",
+            data={
+                'upload_url': presigned_url,
+                'url': real_url  # FE가 content에 넣을 주소
+            },
+            status_code=status.HTTP_200_OK
+        )
+
+
+# zip 업로드 용 presigned url 응답
+class S3ZipUploadPresignedUrlView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        base_path = request.data.get("base_path")
+        filename = request.data.get("filename")
+        extension = request.data.get('extension')
+
+        res = generate_presigned_url_for_zip_upload(base_path, filename, extension)
         if isinstance(res, Response):
             return res
         presigned_url, real_url = res
