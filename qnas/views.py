@@ -360,8 +360,10 @@ def game_register(request, game_id):
     )
 
     # 페이지 알림
+    # 2025-09-08 수정. user 값을 게임의 제작자로 수정
     notif = create_notification(
-        user=request.user,
+        # user=request.user,
+        user=row.maker,
         noti_type=Notification.NotificationType.GAME_UPLOAD,
         noti_sub_type=NotificationSubType.REGISTER_APPROVE,
         related_object=row,
@@ -413,8 +415,10 @@ def game_register_deny(request, game_id):
     )
 
     # 페이지 알림
+    # 2025-09-08 수정. user 값을 게임의 제작자로 수정
     notif = create_notification(
-        user=request.user,
+        # user=request.user,
+        user=game.maker,
         noti_type=Notification.NotificationType.GAME_UPLOAD,
         noti_sub_type=NotificationSubType.REGISTER_REJECT,
         related_object=game,
