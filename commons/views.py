@@ -14,6 +14,7 @@ from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
+from rest_framework import generics, permissions
 from rest_framework import status
 from rest_framework.decorators import api_view
 from rest_framework.views import APIView
@@ -23,6 +24,10 @@ from rest_framework.response import Response
 
 from spartagames.utils import std_response
 from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
+
+from .models import Notification
+from .pagination import NotificationPagination
+from .serializers import NotificationSerializer
 
 
 # 업로드 용 presigned url 발급
@@ -116,3 +121,37 @@ def extract_content_text(content):
     clean_text = re.sub(r'\s+', ' ', clean_text)
     
     return clean_text.strip()
+
+
+class NotificationListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        qs = Notification.objects.filter(user=user)
+
+        paginator = NotificationPagination()
+        paginated_qs = paginator.paginate_queryset(qs, request)
+
+        serializer = NotificationSerializer(paginated_qs, many=True)
+        response_data = paginator.get_paginated_response(serializer.data).data
+        
+        # return response_data
+        return std_response(
+            data=response_data["results"],
+            message="알람을 불러왔습니다.", status="success",
+            pagination={"count": qs.count(), "next":response_data["next"], "previous":response_data["previous"]},
+            status_code=status.HTTP_200_OK
+        )
+
+
+class NotificationMarkReadView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def patch(self, request, noti_id):
+        qs = Notification.objects.get(id=noti_id)
+        if qs.user != request.user:
+            return std_response(message="잘못된 접근입니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
+        qs.is_read = True
+        qs.save()
+        return std_response(message="알림 읽음 처리를 완료했습니다.", status="success", status_code=status.HTTP_200_OK)

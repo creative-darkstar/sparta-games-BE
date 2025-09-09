@@ -66,6 +66,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'django_celery_results',  # Celery 태스크 결과 저장
     'django_celery_beat',     # Celery Beat 스케줄러
+    'channels',
 
     # Apps
     "accounts",
@@ -131,6 +132,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'spartagames.wsgi.application'
+ASGI_APPLICATION = 'spartagames.asgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
@@ -150,6 +152,16 @@ DATABASES = {
         'USER': config.DATABASES["user"],
         'PASSWORD': config.DATABASES["password"],
     }
+}
+
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            "hosts": [('127.0.0.1', 6379)],  # Redis 서버 주소
+            # "db": 1,  # <-- 1번 데이터베이스 사용
+        },
+    },
 }
 
 # Celery 브로커로 Django 데이터베이스 사용
