@@ -26,9 +26,12 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = config.DJANGO_SECRET_KEY
 OPEN_API_KEY = config.OPENAI_API_KEY
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = [
+    'www.sparta-games.net',
+    'sparta-games.net',
+    '13.209.74.174',
     'localhost',
     '127.0.0.1',
 ]
@@ -50,6 +53,7 @@ INSTALLED_APPS = [
     "django_extensions",
     "rest_framework",
     "rest_framework_simplejwt.token_blacklist",
+    "storages",
     'allauth',
     'allauth.account',
     'allauth.socialaccount',
@@ -93,6 +97,22 @@ MIDDLEWARE = [
 
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
+# CORS settings
+# Allow specific origins
+CORS_ALLOWED_ORIGINS = [
+    "https://sparta-games.net",
+    "https://www.sparta-games.net",
+    "http://localhost:5173",  # React 앱 주소
+    "https://spartagames-git-dev-horanges-projects.vercel.app",
+    "https://sparta-games-fe.vercel.app",
+]
+CORS_ALLOW_CREDENTIALS = True # 인증 정보 포함 설정
+
+# CSRF 오류 발생시 활성화
+# CSRF_TRUSTED_ORIGINS = [
+#     "http://localhost:5713",
+# ]
+
 ROOT_URLCONF = 'spartagames.urls'
 
 TEMPLATES = [
@@ -114,25 +134,23 @@ TEMPLATES = [
 WSGI_APPLICATION = 'spartagames.wsgi.application'
 ASGI_APPLICATION = 'spartagames.asgi.application'
 
-#CORS settings
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # React 앱 주소
-    # "http://127.0.0.1:8000",
-]
-CORS_ALLOW_CREDENTIALS = True #인증 정보 포함 설정
-
-#CSRF 오류 발생시 활성화
-# CSRF_TRUSTED_ORIGINS = [
-#     "http://localhost:5713",
-# ]
-
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'HOST': config.DATABASES["host"],
+        'PORT': config.DATABASES["port"],
+        'NAME': config.DATABASES["database"],
+        'USER': config.DATABASES["user"],
+        'PASSWORD': config.DATABASES["password"],
     }
 }
 
@@ -152,34 +170,39 @@ CELERY_RESULT_BACKEND = 'django-db'
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
+CELERY_TASK_TRACK_STARTED = True
 
 # Celery Beat 설정 (스케줄링)
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
 
 CELERY_BEAT_SCHEDULE = {
-    'assign-chips-every-day': {
-        'task': 'games.tasks.assign_chips_to_top_games',
-        'schedule': timedelta(minutes=1),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
-    },
-    'cleanup_new_game_chip':{
-        'task': 'games.tasks.cleanup_new_game_chip',
-        'schedule': timedelta(minutes=10),
-    },
-    'assign-bookmark-top-chips-daily': {
-        'task': 'games.tasks.assign_bookmark_top_chips',
-        'schedule': timedelta(minutes=3),
-    },
-    'assign-long-play-chips-daily': {
-        'task': 'games.tasks.assign_long_play_chips',
-        'schedule': timedelta(minutes=4),
-    },
-    'assign-review-top-chips-daily': {
-        'task': 'games.tasks.assign_review_top_chips',
-        'schedule': timedelta(minutes=5),
-    },
+    #'assign-chips-every-day': {
+    #    'task': 'games.tasks.assign_chips_to_top_games',
+    #    'schedule': crontab(hour=4, minute=0),  #crontab(hour=0, minute=0)=>매일 00:00에 실행
+    #},
+    #'cleanup_new_game_chip':{
+    #    'task': 'games.tasks.cleanup_new_game_chip',
+    #    'schedule': timedelta(days=3),
+    #},
+    #'assign-bookmark-top-chips-daily': {
+    #    'task': 'games.tasks.assign_bookmark_top_chips',
+    #    'schedule': crontab(hour=3, minute=45),
+    #},
+    #'assign-long-play-chips-daily': {
+    #    'task': 'games.tasks.assign_long_play_chips',
+    #    'schedule': crontab(hour=3, minute=50),
+    #},
+    #'assign-review-top-chips-daily': {
+    #    'task': 'games.tasks.assign_review_top_chips',
+    #    'schedule': crontab(hour=3, minute=40),
+    #},
     'hard-delete-user': {
         'task': 'qnas.tasks.hard_delete_user',
-        'schedule': timedelta(minutes=1),
+        'schedule': crontab(hour=6, minute=0),
+    },
+    'routine-email-by-token': {
+        'task': 'accounts.tasks.routine_email_by_token',
+        'schedule': crontab(day_of_month=1, hour=6, minute=0, month_of_year='*/3'),
     },
 }
 
@@ -240,7 +263,7 @@ REST_FRAMEWORK = {
 
 # DRF JWT setting
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=1),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=30),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=14),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
@@ -258,18 +281,32 @@ USE_I18N = True
 
 USE_TZ = True
 
+# django-storages settings
+# https://django-storages.readthedocs.io/en/latest/backends/amazon-S3.html#settings
+
+AWS_S3_ACCESS_KEY_ID = config.AWS_AUTH["aws_access_key_id"]
+AWS_S3_SECRET_ACCESS_KEY = config.AWS_AUTH["aws_secret_access_key"]
+
+AWS_STORAGE_BUCKET_NAME = config.AWS_S3_BUCKET_NAME
+AWS_S3_REGION_NAME = "ap-northeast-2"
+AWS_S3_CUSTOM_DOMAIN = f"{AWS_STORAGE_BUCKET_NAME}.s3.{AWS_S3_REGION_NAME}.amazonaws.com"
+
+AWS_S3_FILE_OVERWRITE = False
+AWS_QUERYSTRING_AUTH = False
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/4.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
-STATIC_ROOT = BASE_DIR / "staticfiles"
+# boto3 settings
+STATICFILES_STORAGE = "spartagames.custom_storages.StaticStorage"
 
 # Media files
 
-MEDIA_URL = "/media/"
-MEDIA_ROOT = BASE_DIR / "media"
+MEDIA_URL = f"https://{AWS_S3_CUSTOM_DOMAIN}/media/"
+# boto3 settings
+DEFAULT_FILE_STORAGE = "spartagames.custom_storages.MediaStorage"
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/4.2/ref/settings/#default-auto-field
@@ -280,3 +317,22 @@ ACCOUNT_USER_MODEL_USERNAME_FIELD = None  # username 필드를 사용하지 않�
 ACCOUNT_EMAIL_REQUIRED = True  # 이메일을 필수로 요구
 ACCOUNT_USERNAME_REQUIRED = False  # username 필드를 사용하지 않음
 ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'file': {
+            'level': 'ERROR',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'django_error.log',
+        },
+    },
+    'loggers': {
+        'django.request': {
+            'handlers': ['file'],
+            'level': 'ERROR',
+            'propagate': True,
+        },
+    },
+}

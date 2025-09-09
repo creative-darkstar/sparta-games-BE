@@ -1,5 +1,6 @@
 import re
 
+from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404, render
 from django.utils import timezone
@@ -158,10 +159,18 @@ class ProfileAPIView(APIView):
         # "image" 데이터를 우선 data.get으로 확인. 확인 시 빈 값("")일 경우 이미지 삭제
         # 변경할 이미지 값이 있거나 "image" 데이터를 포함하지 않았을 경우 기존대로 동작
         image = self.request.data.get("image")
+        # 이미지를 삭제하는 경우
         if image == "":
+            # 기존 파일 s3에서 삭제
+            default_storage.delete(user.image.name)
+            # 데이터 비우기
             user.image = None
-        else:
-            user.image = self.request.FILES.get("image", user.image)
+        # 이미지를 변경하는 경우
+        elif image is not None:
+            # 기존 파일 s3에서 삭제
+            default_storage.delete(user.image.name)
+            # 데이터 변경
+            user.image = self.request.FILES.get("image")
         # 유저 / 메이커 구분
         user.is_maker = self.request.data.get('is_maker', user.is_maker)
         # 자기소개
