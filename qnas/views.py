@@ -26,6 +26,7 @@ from .serializers import (
     CategorySerializer,
     GameRegisterListSerializer,
 )
+from .tasks import r
 from games.models import (
     Game,
 )
@@ -447,6 +448,11 @@ from .tasks import game_register_task
 
 @api_view(["POST"])
 def game_register_v2(request, game_id):
+    created = r.set(f"game:dedup:{game_id}", "1", nx=True, ex=30)
+    if not created:
+        return Response({
+            "message": "same task. will skip: it's dup",
+        }, status=status.HTTP_406_NOT_ACCEPTABLE)
     task = game_register_task.delay(game_id)
     
     # # 게임 등록 로그에 데이터 추가
