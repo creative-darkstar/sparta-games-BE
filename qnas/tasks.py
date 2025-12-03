@@ -22,7 +22,7 @@ from .models import DeleteUsers, GameRegisterLog
 from games.models import Game
 
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("sparta_games_logfile")
 redis_url = urlparse(settings.CELERY_BROKER_URL)
 r = redis.Redis(
     host=redis_url.hostname,

@@ -84,6 +84,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'spartagames.custom_middleware.RequestContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'spartagames.custom_middleware.CustomXFrameOptionsMiddleware',  # Custom 설정 추가
@@ -321,18 +322,46 @@ ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'handlers': {
+    "filters": {
+        "request_context": {
+            "()": "spartagames.logging_context.RequestContextFilter",
+        },
+    },
+    "formatters": {
+        "verbose": {
+            "format": (
+                "%(asctime)s [%(levelname)s] %(name)s "
+                "[request_id=%(request_id)s user_id=%(user_id)s] "
+                "%(message)s path=%(path)s method=%(method)s"
+            )
+        },
+    },
+    "handlers": {
         'file': {
             'level': 'ERROR',
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'django_error.log',
         },
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_context"],
+            "formatter": "verbose",
+        },
     },
-    'loggers': {
-        'django.request': {
+    "loggers": {
+        "sparta_games": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        'sparta_games_logfile': {
             'handlers': ['file'],
             'level': 'ERROR',
             'propagate': True,
         },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
     },
 }

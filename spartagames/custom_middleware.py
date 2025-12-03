@@ -1,7 +1,11 @@
-# middleware.py
+import uuid
+
 from django.utils.deprecation import MiddlewareMixin
 from rest_framework.response import Response
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.views import APIView
+
+from .logging_context import set_request_context, clear_request_context
 
 
 class CustomXFrameOptionsMiddleware(MiddlewareMixin):
@@ -92,3 +96,46 @@ class DRFStandardResponseMiddleware(MiddlewareMixin):
         response._is_rendered = False
         response.render()
         return response
+
+
+class RequestContextMiddleware(MiddlewareMixin):
+    def __init__(self, get_response):
+        super().__init__(get_response)
+        self.jwt_authenticator = JWTAuthentication()
+
+    def __call__(self, request):
+        try:
+            request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+            request.request_id = request_id
+
+            # JWT 기반 유저 확인
+            user = getattr(request, "user", None)
+            try:
+                header = self.jwt_authenticator.get_header(request)
+                if header is not None:
+                    raw_token = self.jwt_authenticator.get_raw_token(header)
+                    if raw_token is not None:
+                        validated_token = self.jwt_authenticator.get_validated_token(raw_token)
+                        user = self.jwt_authenticator.get_user(validated_token)
+                        request.user = user  # Django 레벨에서 user 세팅
+            except Exception:
+                # 토큰이 없거나 잘못된 경우에는 그냥 anonymous 유지
+                user = None
+            
+            if user and request.user.is_authenticated:
+                user_id = request.user.pk
+            else:
+                user_id = "anonymous"
+
+            set_request_context(
+                request_id=request_id,
+                user_id=user_id,
+                path=request.path,
+                method=request.method,
+            )
+
+            response = self.get_response(request)
+            response["X-Request-ID"] = request_id
+            return response
+        finally:
+            clear_request_context()

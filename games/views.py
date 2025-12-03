@@ -1,3 +1,4 @@
+import logging
 import re
 
 from django.core.files.storage import default_storage
@@ -45,6 +46,9 @@ from urllib.parse import urlencode
 from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
 from commons.models import Notification
 from commons.utils import NotificationSubType, create_notification
+
+
+logger = logging.getLogger("sparta_games")
 
 
 class GameListAPIView(APIView):
@@ -794,6 +798,7 @@ class ReviewAPIView(APIView):
                 status="success",
                 status_code=status.HTTP_201_CREATED
             )
+
         # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         return std_response(
             data=serializer.errors,
