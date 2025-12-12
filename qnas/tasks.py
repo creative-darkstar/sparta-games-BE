@@ -22,7 +22,7 @@ from .models import DeleteUsers, GameRegisterLog
 from games.models import Game
 
 
-logger = logging.getLogger("sparta_games_logfile")
+logger = logging.getLogger("sparta_games_celery")
 redis_url = urlparse(settings.CELERY_BROKER_URL)
 r = redis.Redis(
     host=redis_url.hostname,
@@ -68,10 +68,9 @@ def hard_delete_user():
             
             user.delete()
         
-        return f"유저 완전 삭제 프로세스 완료"
+        logger.info(f"유저 완전 삭제 프로세스 완료")
     except Exception as e:
-        # 예외 발생 시 로그 남기기 (추가적인 로깅 설정 필요 시 설정)
-        return f"Error in assigning '' : {str(e)}"
+        logger.error(f"Error in assigning '' : {str(e)}", exc_info=True)
 
 
 @shared_task(
@@ -97,7 +96,7 @@ def game_register_task(self, game_id):
         try:
             row = Game.objects.get(pk=game_id, is_visible=True, register_state=0)
         except ObjectDoesNotExist as e:
-            logger.error(f"게임 {game_id} 없음 또는 등록 불가 상태")
+            logger.error(f"게임 {game_id} 없음 또는 등록 불가 상태", exc_info=True)
             return
             # 무한 리트라이 문제 때문에 주석 처리
             # raise self.retry(exc=e)
@@ -115,7 +114,7 @@ def game_register_task(self, game_id):
                 Key=f"media/{row.gamefile.name}"
             )
         except Exception as e:
-            logger.exception("S3에서 zip 파일 가져오기 실패")
+            logger.exception("S3에서 zip 파일 가져오기 실패", exc_info=True)
             raise self.retry(exc=e)
 
         with NamedTemporaryFile(delete=False) as tmp_file:
@@ -240,7 +239,7 @@ def game_register_task(self, game_id):
                     body.close()
 
         except Exception as e:
-            logger.exception("게임 등록 중 에러 발생")
+            logger.exception("게임 등록 중 에러 발생", exc_info=True)
             raise self.retry(exc=e)
         
         # 생성했던 임시 파일 삭제
@@ -253,13 +252,15 @@ def game_register_task(self, game_id):
                 try:
                     os.remove(zip_path)
                 except Exception as e:
-                    logger.warning(f"zip_path 삭제 실패: {e}")
+                    logger.warning(f"zip_path 삭제 실패: {e}", exc_info=True)
 
             if out_zip_path and os.path.exists(out_zip_path):
                 try:
                     os.remove(out_zip_path)
                 except Exception as e:
-                    logger.warning(f"out_zip_path 삭제 실패: {e}")
+                    logger.warning(f"out_zip_path 삭제 실패: {e}", exc_info=True)
+
+        logger.info(f"게임 등록을 완료했습니다. (game id: {game_id})")
 
         row.gamepath = f"https://{settings.AWS_S3_CUSTOM_DOMAIN}/media/games/{game_folder}"
         row.register_state = 1

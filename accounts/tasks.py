@@ -1,8 +1,12 @@
+import logging
 import requests
 
 from celery import shared_task
 
 from spartagames.config import ADMIN_USER_EMAIL, ADMIN_STAFF_EMAIL
+
+
+logger = logging.getLogger("sparta_games_celery")
 
 
 @shared_task
@@ -17,5 +21,6 @@ def routine_email_by_token():
     
     try:
         resp = requests.post("https://sparta-games.net/accounts/api/email/", data=data)
+        logger.info("routine_email_by_token_success")
     except Exception as e:
-        print(e)
+        logger.error("routine_email_by_token_failed", exc_info=True)

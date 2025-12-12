@@ -1,3 +1,4 @@
+import logging
 import uuid
 
 from django.utils.deprecation import MiddlewareMixin
@@ -6,6 +7,9 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.views import APIView
 
 from .logging_context import set_request_context, clear_request_context
+
+
+logger = logging.getLogger("sparta_games")
 
 
 class CustomXFrameOptionsMiddleware(MiddlewareMixin):
@@ -134,7 +138,26 @@ class RequestContextMiddleware(MiddlewareMixin):
                 method=request.method,
             )
 
+            logger.info(
+                "REQUEST START",
+                extra={
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "path": request.path,
+                    "method": request.method,
+                }
+            )
+
             response = self.get_response(request)
+
+            logger.info(
+                f"REQUEST END (status_code: {response.status_code})",
+                extra={
+                    "request_id": request_id,
+                    "status_code": response.status_code,
+                }
+            )
+
             response["X-Request-ID"] = request_id
             return response
         finally:

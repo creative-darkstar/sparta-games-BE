@@ -48,9 +48,6 @@ from commons.models import Notification
 from commons.utils import NotificationSubType, create_notification
 
 
-logger = logging.getLogger("sparta_games")
-
-
 class GameListAPIView(APIView):
     """
     포스트일 때 로그인 인증을 위한 함수

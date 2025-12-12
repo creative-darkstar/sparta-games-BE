@@ -138,22 +138,22 @@ ASGI_APPLICATION = 'spartagames.asgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-# DATABASES = {
-#     'default': {
-#         'ENGINE': 'django.db.backends.sqlite3',
-#         'NAME': BASE_DIR / 'db.sqlite3',
-#     }
-# }
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'HOST': config.DATABASES["host"],
-        'PORT': config.DATABASES["port"],
-        'NAME': config.DATABASES["database"],
-        'USER': config.DATABASES["user"],
-        'PASSWORD': config.DATABASES["password"],
+        'ENGINE': 'django.db.backends.sqlite3',
+        'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.postgresql',
+#         'HOST': config.DATABASES["host"],
+#         'PORT': config.DATABASES["port"],
+#         'NAME': config.DATABASES["database"],
+#         'USER': config.DATABASES["user"],
+#         'PASSWORD': config.DATABASES["password"],
+#     }
+# }
 
 CHANNEL_LAYERS = {
     'default': {
@@ -337,10 +337,21 @@ LOGGING = {
         },
     },
     "handlers": {
-        'file': {
-            'level': 'ERROR',
+        'info_level_log_file': {
+            'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'django_error.log',
+            'filename': BASE_DIR / 'spartagames_BE_info_level.log',
+            "filters": ["request_context"],
+            "formatter": "verbose",
+            "encoding": "utf-8",
+        },
+        'celery_log_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'spartagames_BE_celery.log',
+            "filters": ["request_context"],
+            "formatter": "verbose",
+            "encoding": "utf-8",
         },
         "console": {
             "class": "logging.StreamHandler",
@@ -350,14 +361,14 @@ LOGGING = {
     },
     "loggers": {
         "sparta_games": {
-            "handlers": ["console"],
+            "handlers": ["console", 'info_level_log_file'],
             "level": "INFO",
             "propagate": False,
         },
-        'sparta_games_logfile': {
-            'handlers': ['file'],
-            'level': 'ERROR',
-            'propagate': True,
+        "sparta_games_celery": {
+            "handlers": ["console", 'celery_log_file'],
+            "level": "INFO",
+            "propagate": False,
         },
     },
     "root": {
