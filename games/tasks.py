@@ -2,7 +2,11 @@ from datetime import timedelta
 from django.utils import timezone
 from celery import shared_task
 from django.db.models import Count, Q,Sum
+import logging
 from .models import Game, Chip
+
+
+logger = logging.getLogger("sparta_games_celery")
 
 
 @shared_task
@@ -36,10 +40,9 @@ def assign_chips_to_top_games():
         for game in top_games:
             game.chip.add(daily_chip)
         
-        return f"Assigned 'Daily Top' chip to {len(top_games)} games."
+        logger.info(f"Assigned 'Daily Top' chip to {len(top_games)} games.")
     except Exception as e:
-        # 예외 발생 시 로그 남기기 (추가적인 로깅 설정 필요 시 설정)
-        return f"Error in assigning 'Daily Top' chips: {str(e)}"
+        logger.error(f"Error in assigning 'Daily Top' chips: {str(e)}", exc_info=True)
 
 
 @shared_task
@@ -58,9 +61,9 @@ def cleanup_new_game_chip():
         for game in games_with_new_game:
             game.chip.remove(new_game_chip)
         
-        return f"Removed 'New Game' chip from {len(games_with_new_game)} games."
+        logger.info(f"Removed 'New Game' chip from {len(games_with_new_game)} games.")
     except Exception as e:
-        return f"Error in cleaning up 'New Game' chips: {str(e)}"
+        logger.error(f"Error in cleaning up 'New Game' chips: {str(e)}", exc_info=True)
 
 
 @shared_task
@@ -87,10 +90,9 @@ def assign_bookmark_top_chips():
         for game in top_bookmarked_games:
             game.chip.add(bookmark_chip)
         
-        return f"Assigned 'Bookmark Top' chip to {len(top_bookmarked_games)} games."
+        logger.info(f"Assigned 'Bookmark Top' chip to {len(top_bookmarked_games)} games.")
     except Exception as e:
-        # 예외 발생 시 로그 남기기 (추가적인 로깅 설정 필요 시 설정)
-        return f"Error in assigning 'Bookmark Top' chips: {str(e)}"
+        logger.error(f"Error in assigning 'Bookmark Top' chips: {str(e)}", exc_info=True)
     
 @shared_task
 def assign_long_play_chips():
@@ -123,9 +125,9 @@ def assign_long_play_chips():
         for game in top_long_play_games:
             game.chip.add(long_play_chip)
         
-        return f"Assigned 'Long Play' chip to {len(top_long_play_games)} games."
+        logger.info(f"Assigned 'Long Play' chip to {len(top_long_play_games)} games.")
     except Exception as e:
-        return f"Error in assigning 'Long Play' chips: {str(e)}"
+        logger.error(f"Error in assigning 'Long Play' chips: {str(e)}", exc_info=True)
     
 @shared_task
 def assign_review_top_chips():
@@ -156,6 +158,6 @@ def assign_review_top_chips():
         for game in top_reviewed_games:
             game.chip.add(review_top_chip)
         
-        return f"Assigned 'Review Top' chip to {len(top_reviewed_games)} games."
+        logger.info(f"Assigned 'Review Top' chip to {len(top_reviewed_games)} games.")
     except Exception as e:
-        return f"Error in assigning 'Review Top' chips: {str(e)}"
+        logger.error(f"Error in assigning 'Review Top' chips: {str(e)}", exc_info=True)

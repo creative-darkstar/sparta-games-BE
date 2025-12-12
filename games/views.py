@@ -1,3 +1,4 @@
+import logging
 import re
 
 from django.core.files.storage import default_storage
@@ -794,6 +795,7 @@ class ReviewAPIView(APIView):
                 status="success",
                 status_code=status.HTTP_201_CREATED
             )
+
         # return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         return std_response(
             data=serializer.errors,
