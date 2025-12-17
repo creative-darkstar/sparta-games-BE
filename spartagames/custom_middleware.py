@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import logging
 import uuid
 
@@ -107,7 +109,7 @@ class RequestContextMiddleware(MiddlewareMixin):
         super().__init__(get_response)
         self.jwt_authenticator = JWTAuthentication()
 
-    def __call__(self, request):
+    async def __call__(self, request):
         try:
             request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
             request.request_id = request_id
@@ -148,7 +150,10 @@ class RequestContextMiddleware(MiddlewareMixin):
                 }
             )
 
+            # response = self.get_response(request)
             response = self.get_response(request)
+            if inspect.iscoroutine(response):
+                response = await response
 
             logger.info(
                 f"REQUEST END (status_code: {response.status_code})",
