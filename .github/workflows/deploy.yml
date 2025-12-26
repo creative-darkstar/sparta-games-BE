@@ -48,8 +48,13 @@ jobs:
   #       python manage.py makemigrations --check --dry-run
 
   cd:
-    name: Deploy to EC2 (main push only)
-    if: github.ref == 'refs/heads/main' && contains(fromJSON('["push", "pull_request"]'), github.event_name)
+    name: Deploy to EC2 (push main + PR to main)
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (
+        github.event_name == 'pull_request'
+        && github.base_ref == 'main'
+        && github.event.pull_request.head.repo.full_name == github.repository
+      )
     runs-on: ubuntu-latest
 
     steps:
@@ -72,9 +77,9 @@ jobs:
           pip install -r requirements.txt
           python manage.py migrate --noinput
           python manage.py collectstatic --noinput
-          sudo supervisorctl restart all
-          sudo systemctl restart gunicorn
+          sudo systemctl restart daphne
           sudo systemctl restart nginx
+          sudo supervisorctl restart all
         EOF
 
     - name: Notify to Discord

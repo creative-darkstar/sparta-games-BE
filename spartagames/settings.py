@@ -84,6 +84,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'spartagames.custom_middleware.RequestContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'spartagames.custom_middleware.CustomXFrameOptionsMiddleware',  # Custom 설정 추가
@@ -321,18 +322,57 @@ ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
-    'handlers': {
-        'file': {
-            'level': 'ERROR',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'django_error.log',
+    "filters": {
+        "request_context": {
+            "()": "spartagames.logging_context.RequestContextFilter",
         },
     },
-    'loggers': {
-        'django.request': {
-            'handlers': ['file'],
-            'level': 'ERROR',
-            'propagate': True,
+    "formatters": {
+        "verbose": {
+            "format": (
+                "%(asctime)s [%(levelname)s] %(name)s "
+                "[request_id=%(request_id)s user_id=%(user_id)s] "
+                "%(message)s path=%(path)s method=%(method)s"
+            )
         },
+    },
+    "handlers": {
+        'info_level_log_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'spartagames_BE_info_level.log',
+            "filters": ["request_context"],
+            "formatter": "verbose",
+            "encoding": "utf-8",
+        },
+        'celery_log_file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'spartagames_BE_celery.log',
+            "filters": ["request_context"],
+            "formatter": "verbose",
+            "encoding": "utf-8",
+        },
+        "console": {
+            "class": "logging.StreamHandler",
+            "filters": ["request_context"],
+            "formatter": "verbose",
+        },
+    },
+    "loggers": {
+        "sparta_games": {
+            "handlers": ["console", 'info_level_log_file'],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "sparta_games_celery": {
+            "handlers": ["console", 'celery_log_file'],
+            "level": "INFO",
+            "propagate": False,
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "INFO",
     },
 }
