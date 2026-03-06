@@ -5,3 +5,32 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+    networks:
+      - spartagames-net
+
+  spartagames-be:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8000 spartagames.asgi:application
+    deploy:
+      replicas: 3
+    restart: always
+    depends_on:
+      - redis
+    networks:
+      - spartagames-net
+
+  proxy-be:
+    image: nginx:1.21.5-alpine
+    container_name: sparta-proxy-server
+    restart: always
+    depends_on:
+      - spartagames-be
+    ports:
+      - '8000:80'
+    volumes:
+      - ./nginx-be.conf:/etc/nginx/nginx.conf
+    networks:
+      - spartagames-net
+
+networks:
+  spartagames-net:

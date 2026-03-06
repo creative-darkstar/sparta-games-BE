@@ -4,6 +4,7 @@
 # Custom
 .idea
 config.py
+nginx-be.conf
 
 **/media/images/screenshot/*
 **/media/images/thumbnail/*

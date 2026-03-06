@@ -9,6 +9,7 @@ class UserBehavior(TaskSet):
 
 
 class LocustUser(HttpUser):
-    host = "http://127.0.0.1:8000/"
+    # host = "http://127.0.0.1:8000/"
+    host = "http://host.docker.internal:8000/"
     tasks = [UserBehavior]
     wait_time = between(1, 4)
