@@ -2,6 +2,7 @@ import asyncio
 import inspect
 import logging
 import uuid
+import time
 
 from django.utils.deprecation import MiddlewareMixin
 from rest_framework.response import Response
@@ -111,6 +112,7 @@ class RequestContextMiddleware(MiddlewareMixin):
 
     async def __call__(self, request):
         try:
+            start_time = time.time()
             request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
             request.request_id = request_id
 
@@ -156,7 +158,7 @@ class RequestContextMiddleware(MiddlewareMixin):
                 response = await response
 
             logger.info(
-                f"REQUEST END (status_code: {response.status_code})",
+                f"REQUEST END (elapsed_time={(time.time() - start_time):.3f}s, status_code: {response.status_code})",
                 extra={
                     "request_id": request_id,
                     "status_code": response.status_code,
