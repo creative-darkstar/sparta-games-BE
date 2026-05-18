@@ -1,5 +1,26 @@
 from rest_framework import serializers
-from .models import Game, Review, GameCategory, Screenshot, ReviewsLike, Like
+from .models import Game, Review, GameCategory, Screenshot
+
+DIFFICULTY_CHIPS = ["EASY", "NORMAL", "HARD"]
+PRIORITY_CHIPS = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
+
+
+def build_game_chips(obj):
+    chips = list(obj.chip.all())
+    result = []
+
+    difficulty_chip = next((c for c in chips if c.name in DIFFICULTY_CHIPS), None)
+    if difficulty_chip:
+        result.append({"id": difficulty_chip.id, "name": difficulty_chip.name})
+
+    for chip_name in PRIORITY_CHIPS:
+        if len(result) >= 3:
+            break
+        chip = next((c for c in chips if c.name == chip_name), None)
+        if chip:
+            result.append({"id": chip.id, "name": chip.name})
+
+    return result
 
 
 class GameListSerializer(serializers.ModelSerializer):
@@ -24,36 +45,14 @@ class GameListSerializer(serializers.ModelSerializer):
         return round(obj.star, 2) if obj.star is not None else 0
     
     def get_chips(self, obj):
-        chips = obj.chip.all()
-        difficulty_chips = ["EASY", "NORMAL", "HARD"]
-        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
-
-        result = []
-
-        # 난이도 칩 하나 선택
-        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
-        if difficulty_chip:
-            result.append({"id": difficulty_chip.id, "name": difficulty_chip.name})
-
-        # 우선순위 칩 최대 2개 추가
-        for chip_name in priority_chips:
-            if len(result) >= 3:
-                break
-            chip = chips.filter(name=chip_name).first()
-            if chip:
-                result.append({"id": chip.id, "name": chip.name})
-
-        return result
+        return build_game_chips(obj)
     
     def get_is_liked(self, obj):
-        user = self.context.get('user')
-        # 사용자가 인증된 경우 해당 게임에 대한 좋아요 상태를 확인
-        if user and user.is_authenticated:
-            return Like.objects.filter(user=user, game=obj).exists()
+        if hasattr(obj, "is_liked"):
+            return bool(obj.is_liked)
         return False
     
     def get_category_data(self, obj):
-        # 카테고리 리스트를 반환
         return [{"id": category.id, "name": category.name,} for category in obj.category.all()]
 
 
@@ -87,32 +86,12 @@ class GameDetailSerializer(serializers.ModelSerializer):
         return round(obj.star, 2) if obj.star is not None else 0
 
     def get_is_liked(self, obj):
-        user = self.context.get('user')
-        if user and user.is_authenticated:
-            return Like.objects.filter(user=user, game=obj).exists()
+        if hasattr(obj, "is_liked"):
+            return bool(obj.is_liked)
         return False
     
     def get_chips(self, obj):
-        chips = obj.chip.all()
-        difficulty_chips = ["EASY", "NORMAL", "HARD"]
-        priority_chips = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
-
-        result = []
-
-        # 난이도 칩 하나 선택
-        difficulty_chip = chips.filter(name__in=difficulty_chips).first()
-        if difficulty_chip:
-            result.append({"id": difficulty_chip.id, "name": difficulty_chip.name})
-
-        # 우선순위 칩 최대 2개 추가
-        for chip_name in priority_chips:
-            if len(result) >= 3:
-                break
-            chip = chips.filter(name=chip_name).first()
-            if chip:
-                result.append({"id": chip.id, "name": chip.name})
-
-        return result
+        return build_game_chips(obj)
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -138,22 +117,19 @@ class ReviewSerializer(serializers.ModelSerializer):
         }
     
     def get_like_count(self, obj):
-        return ReviewsLike.objects.filter(review=obj, is_like=1).count()
+        if hasattr(obj, "like_count"):
+            return obj.like_count
+        return 0
 
     def get_dislike_count(self, obj):
-        return ReviewsLike.objects.filter(review=obj, is_like=2).count()
+        if hasattr(obj, "dislike_count"):
+            return obj.dislike_count
+        return 0
 
     def get_user_is_like(self, obj):
-        # 현재 요청을 보낸 사용자 확인
-        user = self.context.get('user', None)
-        # 사용자가 인증되지 않은 경우 0 반환
-        if not user or not user.is_authenticated:
-            return 0
-
-        # 사용자가 인증된 경우, 해당 리뷰에 남긴 상태를 조회
-        review_like = ReviewsLike.objects.filter(review=obj, user=user).first()
-        # 리뷰 상태가 존재하면 그 값을 반환, 없으면 0을 반환
-        return review_like.is_like if review_like else 0
+        if hasattr(obj, "user_is_like"):
+            return obj.user_is_like or 0
+        return 0
 
 
 class ScreenshotSerializer(serializers.ModelSerializer):
