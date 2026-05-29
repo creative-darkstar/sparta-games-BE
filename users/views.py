@@ -1,5 +1,3 @@
-import re
-
 from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404, render
@@ -16,6 +14,7 @@ from spartagames.utils import std_response
 from spartagames.pagination import CustomPagination
 
 from .serializers import MyGameListSerializer
+from accounts.constants import NICKNAME_PATTERN, PASSWORD_PATTERN
 
 from accounts.models import EmailVerification
 from games.models import (
@@ -32,12 +31,6 @@ from qnas.models import DeleteUsers
 # ---------- API---------- #
 class ProfileAPIView(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
-
-    # 유효성 검사 정규식 패턴
-    EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
-    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
 
     def get(self, request, user_id):
         try:
@@ -110,7 +103,7 @@ class ProfileAPIView(APIView):
         if nickname == user.nickname:
             pass
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
-        elif not self.NICKNAME_PATTERN.match(nickname):
+        elif not NICKNAME_PATTERN.match(nickname):
             return std_response(
                 message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
                 status="fail",
@@ -147,7 +140,7 @@ class ProfileAPIView(APIView):
         # if email == user.email:
         #     pass
         # # 이메일이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
-        # elif not self.EMAIL_PATTERN.match(email):
+        # elif not EMAIL_PATTERN.match(email):
         #     return Response({"error_message": "올바른 email을 입력해주세요."})
         # elif get_user_model().objects.filter(email=email).exists():
         #     return Response({"error_message": "이미 존재하는 email입니다.."})
@@ -231,11 +224,6 @@ class ProfileAPIView(APIView):
 
 @api_view(["GET"])
 def check_nickname(request):
-    # 유효성 검사 정규식 패턴
-    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
-
     nickname = request.data.get('nickname', None)
         
     # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
@@ -263,11 +251,6 @@ def check_nickname(request):
 
 @api_view(["PUT"])
 def change_password(request, user_id):
-    # 유효성 검사 정규식 패턴
-    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
-    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
-    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
-
     try:
         user = get_user_model().objects.get(pk=user_id, is_active=True)
     except get_user_model().DoesNotExist:
@@ -382,11 +365,6 @@ def password_verify_code(request):
 
 @api_view(["PUT"])
 def reset_password(request):
-    # 유효성 검사 정규식 패턴
-    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
-    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
-    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
-    
     email = request.data.get("email")
     code = request.data.get('code')
     new_password = request.data.get("new_password")
