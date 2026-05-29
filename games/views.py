@@ -4,6 +4,7 @@ import re
 from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Count
 
 from rest_framework.decorators import api_view
@@ -1167,17 +1168,18 @@ class GamePlaytimeAPIView(APIView):
                 status_code=status.HTTP_404_NOT_FOUND,
                 error_code="SERVER_FAIL"
                 )
-        totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
+        with transaction.atomic():
+            totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
 
-        playlog.end_at = timezone.now()  # 현재 시간으로 end_time
-        totalplaytime.latest_at = timezone.now()
+            playlog.end_at = timezone.now()  # 현재 시간으로 end_time
+            totalplaytime.latest_at = timezone.now()
 
-        totaltime = (playlog.end_at - playlog.start_at).total_seconds()
-        playlog.playtime = totaltime  # playtime_seconds로 playtime_seconds 계산
-        totalplaytime.totaltime = totalplaytime.totaltime + totaltime
+            totaltime = (playlog.end_at - playlog.start_at).total_seconds()
+            playlog.playtime = totaltime  # playtime_seconds로 playtime_seconds 계산
+            totalplaytime.totaltime = totalplaytime.totaltime + totaltime
 
-        playlog.save()
-        totalplaytime.save()
+            playlog.save()
+            totalplaytime.save()
         # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
         #                 "start_time":playlog.start_at,
         #                 "end_time":playlog.end_at,
