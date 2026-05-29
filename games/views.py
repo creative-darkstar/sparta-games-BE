@@ -230,40 +230,43 @@ class GameListAPIView(APIView):
             return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Game model에 우선 저장
-        game = Game.objects.create(
-            title=request.data.get('title'),
-            thumbnail=thumbnail,
-            youtube_url=request.data.get('youtube_url'),
-            maker=request.user,
-            content=request.data.get('content'),
-            gamefile=gamefile,
-            star=0,
-            review_cnt=0,
-        )
+        # 게임 및 연관 데이터 저장 (DB 쓰기는 하나의 트랜잭션으로 묶음)
+        with transaction.atomic():
+            # Game model에 우선 저장
+            game = Game.objects.create(
+                title=request.data.get('title'),
+                thumbnail=thumbnail,
+                youtube_url=request.data.get('youtube_url'),
+                maker=request.user,
+                content=request.data.get('content'),
+                gamefile=gamefile,
+                star=0,
+                review_cnt=0,
+            )
 
-        # 카테고리 하나만 설정
-        game.category.set([category])
+            # 카테고리 하나만 설정
+            game.category.set([category])
 
-        new_game_chip, created = Chip.objects.get_or_create(name="New Game")
-        game.chip.add(new_game_chip)
+            new_game_chip, created = Chip.objects.get_or_create(name="New Game")
+            game.chip.add(new_game_chip)
 
-        # 기본 'NORMAL' 칩 추가
-        normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
-        game.chip.add(normal_chip)
+            # 기본 'NORMAL' 칩 추가
+            normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+            game.chip.add(normal_chip)
 
-        # 이후 Screenshot model에 저장
-        for item in screenshots:
-            scrfeenshot=Screenshot.objects.create(src=item, game=game)
+            # 이후 Screenshot model에 저장
+            for item in screenshots:
+                scrfeenshot=Screenshot.objects.create(src=item, game=game)
 
-        # 게임 등록 로그에 데이터 추가
-        game.logs_game.create(
-            recoder = request.user,
-            maker = request.user,
-            game = game,
-            content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
-        )
-        
+            # 게임 등록 로그에 데이터 추가
+            game.logs_game.create(
+                recoder = request.user,
+                maker = request.user,
+                game = game,
+                content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
+            )
+
+        # 외부 I/O는 트랜잭션 커밋 이후 실행
         # 디스코드 알림
         send_discord_notification(game)
 
@@ -576,16 +579,17 @@ class GameDetailAPIView(APIView):
             return game
         # 작성한 유저이거나 관리자일 경우 동작함
         if game.maker == request.user or request.user.is_staff == True:
-            game.is_visible = False
-            game.save()
-            
-            # 게임 삭제 시 게임 등록 로그에 데이터 추가
-            game.logs_game.create(
-                recoder = request.user,
-                maker = request.user,
-                game = game,
-                content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
-            )
+            with transaction.atomic():
+                game.is_visible = False
+                game.save()
+
+                # 게임 삭제 시 게임 등록 로그에 데이터 추가
+                game.logs_game.create(
+                    recoder = request.user,
+                    maker = request.user,
+                    game = game,
+                    content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
+                )
             return std_response(message="게임 삭제가 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
             # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
