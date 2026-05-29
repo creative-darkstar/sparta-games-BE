@@ -464,6 +464,10 @@ class GameDetailAPIView(APIView):
             return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
             #return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
+        # 커밋 이후 삭제할 기존 S3 파일 키 (롤백 시 잘못 삭제되지 않도록 보관만 함)
+        s3_keys_to_delete = []
+
+        # ----- 검증 단계 (DB 쓰기 전에 모두 수행) -----
         # 게임 파일 검증 및 변경 처리
         gamefile = request.FILES.get("gamefile")
         if game.register_state == 2:
@@ -486,8 +490,8 @@ class GameDetailAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             if thumbnail != game.thumbnail:
-                # 기존 파일 s3에서 삭제
-                default_storage.delete(game.thumbnail.name)
+                # 기존 파일은 커밋 후 삭제하기 위해 키만 보관
+                s3_keys_to_delete.append(game.thumbnail.name)
                 # request로 받은 파일로 교체
                 game.thumbnail = thumbnail
                 changes.append("thumbnail")
@@ -508,52 +512,65 @@ class GameDetailAPIView(APIView):
             game.content = content
             changes.append("content")
 
-        game.save()
-
-        # 카테고리 변경 처리 (1개만 허용)
+        # 카테고리 검증 (DB 쓰기 전에 존재 여부 확인)
+        category = None
         category_name = request.data.get("category")
         if category_name:
             try:
                 category = GameCategory.objects.get(name=category_name)
-                if not game.category.filter(pk=category.pk).exists():  # 기존과 다를 경우 변경
-                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
-                    changes.append("category")
             except GameCategory.DoesNotExist:
                 return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
                 #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 기존 스크린샷 유지 또는 삭제
-        old_screenshots = self.request.data.getlist('old_screenshots', [])
-        old_screenshots = [int(pk) for pk in old_screenshots]
-        for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
-            default_storage.delete(item.src.name)
-            item.delete()
-
-        # 새로운 스크린샷 업로드
-        # 스크린샷 검증
+        # 새로운 스크린샷 검증
         screenshots = self.request.FILES.getlist("new_screenshots")
         for screenshot in screenshots:
             is_valid, error_msg = validate_image(screenshot)
             if not is_valid:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-        # 데이터 추가
-        for item in screenshots:
-            screenshot = Screenshot.objects.create(src=item, game=game)
 
-        # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
-        if changes:
-            if "gamefile" in changes:
-                log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            else:
-                log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            game.logs_game.create(
-                recoder=request.user,
-                maker=request.user,
-                game=game,
-                content=log_content,
-            )
-        
+        # 삭제 대상 기존 스크린샷 조회 (실제 삭제는 트랜잭션 내부에서)
+        old_screenshots = self.request.data.getlist('old_screenshots', [])
+        old_screenshots = [int(pk) for pk in old_screenshots]
+        screenshots_to_delete = list(Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots))
+
+        # ----- DB 쓰기 단계 (하나의 트랜잭션으로 묶음) -----
+        with transaction.atomic():
+            game.save()
+
+            # 카테고리 변경 처리 (1개만 허용)
+            if category is not None and not game.category.filter(pk=category.pk).exists():
+                game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
+                changes.append("category")
+
+            # 기존 스크린샷 삭제 (S3 파일 키는 커밋 후 삭제용으로 수집)
+            for item in screenshots_to_delete:
+                s3_keys_to_delete.append(item.src.name)
+                item.delete()
+
+            # 새로운 스크린샷 업로드
+            for item in screenshots:
+                screenshot = Screenshot.objects.create(src=item, game=game)
+
+            # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
+            if changes:
+                if "gamefile" in changes:
+                    log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                else:
+                    log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                game.logs_game.create(
+                    recoder=request.user,
+                    maker=request.user,
+                    game=game,
+                    content=log_content,
+                )
+
+        # ----- 커밋 이후: 외부 I/O -----
+        # 교체/삭제된 기존 S3 파일 삭제
+        for key in s3_keys_to_delete:
+            default_storage.delete(key)
+
         # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
         if game.register_state == 0:
             send_discord_notification(game, msg_text=f"📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n")
