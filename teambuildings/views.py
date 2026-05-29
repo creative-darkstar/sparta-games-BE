@@ -861,7 +861,7 @@ class TeamBuildPostCommentDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):
+        if self.request.method.lower() in ('put', 'delete'):
             permissions.append(IsAuthenticated())
 
         return permissions

@@ -404,7 +404,7 @@ class GameDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -843,7 +843,7 @@ class ReviewDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -1046,7 +1046,7 @@ class CategoryAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('post' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('post', 'delete'):  # 생성/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
