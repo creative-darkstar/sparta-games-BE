@@ -4,7 +4,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 
-from commons.views import extract_content_text
+from commons.utils import extract_content_text
 from games.models import validate_text_content, GameCategory
 
 

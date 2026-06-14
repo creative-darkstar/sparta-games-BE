@@ -1,10 +1,8 @@
 from datetime import datetime
 import os
-import re
 import uuid
 
 import boto3
-from bs4 import BeautifulSoup
 
 from django.conf import settings
 from django.core.files.storage import default_storage, FileSystemStorage
@@ -108,19 +106,6 @@ class LocalImageUploadView(APIView):
         image_url = os.path.join(settings.MEDIA_URL, saved_path)
         full_url = request.build_absolute_uri(image_url)
         return Response({'url': full_url})
-
-
-def extract_content_text(content):
-    raw_text = BeautifulSoup(content or "", "html.parser").get_text()
-    
-    # 이스케이프 문자 -> 공백으로 치환
-    clean_text = raw_text.replace('\xa0', ' ')
-    clean_text = re.sub(r'[\n\r\t]+', ' ', clean_text)
-    
-    # 여러 공백 -> 단일 공백
-    clean_text = re.sub(r'\s+', ' ', clean_text)
-    
-    return clean_text.strip()
 
 
 class NotificationListView(APIView):

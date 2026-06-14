@@ -44,6 +44,11 @@ from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
 from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
+from .querysets import (
+    with_game_list_optimizations,
+    with_game_detail_optimizations,
+    with_review_optimizations,
+)
 from commons.models import Notification
 from commons.utils import NotificationSubType, create_notification
 
@@ -77,14 +82,32 @@ class GameListAPIView(APIView):
             return std_response(message="카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
-        
-        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0]).order_by('-created_at')[:limit]
-        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1]).order_by('-created_at')[:limit]
-        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2]).order_by('-created_at')[:limit]
-        favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1).order_by('-created_at')[:limit]
-        updated_games = Game.objects.filter(is_visible=True, register_state=1).order_by('-updated_at')[:limit]
+
+        rand1 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[0]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        rand2 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[1]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        rand3 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[2]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        favorites = with_game_list_optimizations(
+            Game.objects.filter(chip__name="Daily Top", is_visible=True, register_state=1).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        updated_games = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1).order_by('-updated_at'),
+            request.user,
+        )[:limit]
         if new_game_chip:
-            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at')[:limit]
+            recent_games = with_game_list_optimizations(
+                Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at'),
+                request.user,
+            )[:limit]
         else:
             recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
@@ -273,10 +296,13 @@ def game_list_search(request):
         )
 
     # 게임 목록 필터링
-    games = Game.objects.filter(query).distinct().order_by('-created_at')
+    games = with_game_list_optimizations(
+        Game.objects.filter(query).distinct().order_by('-created_at'),
+        request.user,
+    )
 
     # 즐겨찾기 분리
-    favorite_games = []
+    favorite_games = Game.objects.none()
     if request.user.is_authenticated:
         favorite_games = games.filter(likes__user=request.user)
         favorite_cnt=len(favorite_games)
@@ -342,11 +368,14 @@ def category_games_list(request):
         return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
     
     # 해당 카테고리에 속하는 게임 필터링
-    games = Game.objects.filter(
-        category=category,
-        is_visible=True,
-        register_state=1
-    ).order_by('-created_at')  # 최신순 정렬
+    games = with_game_list_optimizations(
+        Game.objects.filter(
+            category=category,
+            is_visible=True,
+            register_state=1,
+        ).order_by('-created_at'),
+        request.user,
+    )
 
     if not games.exists():
         return std_response(message=f"카테고리 '{category_name}'에 맞는 게임이 없습니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
@@ -375,15 +404,18 @@ class GameDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
 
-    def get_object(self, game_id):
+    def get_object(self, game_id, user=None):
         #return get_object_or_404(Game, pk=game_id, is_visible=True)
         try:
-            return Game.objects.get(pk=game_id, is_visible=True)
+            return with_game_detail_optimizations(
+                Game.objects.filter(pk=game_id, is_visible=True),
+                user if user is not None else getattr(self.request, "user", None),
+            ).get()
         except Game.DoesNotExist:
             return std_response(message="게임이 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
 
@@ -401,8 +433,7 @@ class GameDetailAPIView(APIView):
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
         data = serializer.data
 
-        screenshots = Screenshot.objects.filter(game_id=game_id)
-        screenshot_serializer = ScreenshotSerializer(screenshots, many=True)
+        screenshot_serializer = ScreenshotSerializer(game.screenshots.all(), many=True)
 
         categories = game.category.all()
         category_serializer = CategorySerailizer(categories, many=True)
@@ -655,7 +686,10 @@ class ReviewAPIView(APIView):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
         # 모든 리뷰 가져오기
-        reviews = Review.objects.filter(game=game_id, is_visible=True)
+        reviews = with_review_optimizations(
+            Review.objects.filter(game=game_id, is_visible=True),
+            request.user,
+        )
 
         # 로그인 상태에서 내 리뷰 추출
         my_review = None
@@ -809,7 +843,7 @@ class ReviewDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -817,7 +851,10 @@ class ReviewDetailAPIView(APIView):
     def get(self, request, review_id):
         try:
         # 리뷰가 존재하고, is_visible이 True인 경우만 가져옴
-            review = Review.objects.get(pk=review_id, is_visible=True)
+            review = with_review_optimizations(
+                Review.objects.filter(pk=review_id, is_visible=True),
+                request.user,
+            ).get()
         except Review.DoesNotExist:
             # 리뷰가 존재하지 않으면 404 응답과 함께 메시지 반환
             # return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
@@ -1009,7 +1046,7 @@ class CategoryAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('post' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('post', 'delete'):  # 생성/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
