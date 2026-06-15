@@ -670,7 +670,9 @@ def recently_played_games(request, user_id):
     )
 
     # 리턴
-    if recently_played_games:
+    # 주의: prefetch가 걸린 쿼리셋을 truthy 평가하면 전체 결과를 메모리에 올려 페이지네이션이 무력화되므로
+    # exists()로 가벼운 존재 확인만 수행한다.
+    if recently_played_games.exists():
         # 페이지네이션 적용
         paginator = CustomPagination()
         paginated_data = paginator.paginate_queryset(recently_played_games, request)
