@@ -615,12 +615,12 @@ def gamepacks(request, user_id):
         user,
     )
     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
-    liked_games_count = liked_games.count()
+    # liked_games를 한 번만 평가(list)하여 count()로 인한 중복 쿼리를 제거한다.
+    combined_games = list(liked_games)
+    liked_games_count = len(combined_games)
     if liked_games_count < 4:
         additional_category_games = category_games[:4 - liked_games_count]
-        combined_games = list(liked_games) + list(additional_category_games)
-    else:
-        combined_games = list(liked_games)  # 좋아요한 게임만으로 4개가 이미 채워짐
+        combined_games = combined_games + list(additional_category_games)
     
     # 리턴
     if combined_games:
