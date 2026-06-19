@@ -154,14 +154,16 @@ class ProfileAPIView(APIView):
         image = self.request.data.get("image")
         # 이미지를 삭제하는 경우
         if image == "":
-            # 기존 파일 s3에서 삭제
-            default_storage.delete(user.image.name)
+            # 기존 파일이 있을 때만 s3에서 삭제 (빈 경로 삭제 방지)
+            if user.image:
+                default_storage.delete(user.image.name)
             # 데이터 비우기
             user.image = None
         # 이미지를 변경하는 경우
         elif image is not None:
-            # 기존 파일 s3에서 삭제
-            default_storage.delete(user.image.name)
+            # 기존 파일이 있을 때만 s3에서 삭제 (빈 경로 삭제 방지)
+            if user.image:
+                default_storage.delete(user.image.name)
             # 데이터 변경
             user.image = self.request.FILES.get("image")
         # 유저 / 메이커 구분
