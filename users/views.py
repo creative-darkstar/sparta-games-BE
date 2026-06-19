@@ -520,9 +520,10 @@ def like_games(request, user_id):
     like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
         return std_response(
-            data={},
+            data=[],
             message=f"{request.user}가 즐겨찾기한 게임이 없습니다.",
             status="success",
+            pagination={"count": 0, "next": None, "previous": None},
             status_code=status.HTTP_200_OK
         )
 
@@ -691,9 +692,10 @@ def recently_played_games(request, user_id):
         )
     else:
         return std_response(
-            data={},
+            data=[],
             message="최근 플레이한 게임이 존재하지 않습니다.",
             status="success",
+            pagination={"count": 0, "next": None, "previous": None},
             status_code=status.HTTP_200_OK
         )
 
@@ -712,9 +714,10 @@ def teambuild_posts(request, user_id):
     teambuild_posts = TeamBuildPost.objects.filter(author=user, is_visible=True).distinct().order_by('-create_dt')
     if not teambuild_posts.exists():
         return std_response(
-            data={},
+            data={"teambuild_posts": []},
             message=f"{request.user}가 작성한 팀빌딩 모집글이 없습니다.",
             status="success",
+            pagination={"count": 0, "next": None, "previous": None},
             status_code=status.HTTP_200_OK
         )
     # 다른 사람의 프로필을 조회하는 경우, '모집중' 상태의 글만 보이도록 필터링
