@@ -21,6 +21,7 @@ from games.models import (
     Game,
     GameCategory,
 )
+from games.querysets import with_game_list_optimizations
 from games.serializers import GameListSerializer
 from teambuildings.models import TeamBuildPost
 from teambuildings.pagination import MyTeamBuildPostPagination
@@ -458,6 +459,9 @@ def my_games(request, user_id):
     if user != request.user:
         my_games = my_games.filter(register_state=1)
 
+    # N+1 제거: maker/chip/category 프리페치 + is_liked(프로필 주인 기준) annotate
+    my_games = with_game_list_optimizations(my_games, user)
+
     # 페이지네이션 적용
     paginator = CustomPagination()
     paginated_data = paginator.paginate_queryset(my_games, request)
@@ -520,6 +524,9 @@ def like_games(request, user_id):
             status="success",
             status_code=status.HTTP_204_NO_CONTENT
         )
+
+    # N+1 제거: maker/chip/category 프리페치 + is_liked(프로필 주인 기준) annotate
+    like_games = with_game_list_optimizations(like_games, user)
 
     # 페이지네이션 적용
     paginator = CustomPagination()
@@ -593,21 +600,27 @@ def gamepacks(request, user_id):
     
     # 게임팩 세팅
     # 1. 즐겨찾기한 게임
-    liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+    liked_games = with_game_list_optimizations(
+        Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at'),
+        user,
+    )[:4]
     # 2. 관심 있는 카테고리의 게임 가져오기
     interested_categories = user.game_category.all()
-    category_games = Game.objects.filter(
-        category__in=interested_categories,
-        is_visible=True,
-        register_state=1
-    ).exclude(likes__user=user).distinct().order_by('-star','-created_at')
+    category_games = with_game_list_optimizations(
+        Game.objects.filter(
+            category__in=interested_categories,
+            is_visible=True,
+            register_state=1
+        ).exclude(likes__user=user).distinct().order_by('-star','-created_at'),
+        user,
+    )
     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
-    liked_games_count = liked_games.count()
+    # liked_games를 한 번만 평가(list)하여 count()로 인한 중복 쿼리를 제거한다.
+    combined_games = list(liked_games)
+    liked_games_count = len(combined_games)
     if liked_games_count < 4:
         additional_category_games = category_games[:4 - liked_games_count]
-        combined_games = list(liked_games) + list(additional_category_games)
-    else:
-        combined_games = list(liked_games)  # 좋아요한 게임만으로 4개가 이미 채워짐
+        combined_games = combined_games + list(additional_category_games)
     
     # 리턴
     if combined_games:
@@ -618,7 +631,10 @@ def gamepacks(request, user_id):
             status_code=status.HTTP_200_OK
         )
     else:
-        latest_games=list(Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at')[:4])
+        latest_games=list(with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at'),
+            user,
+        )[:4])
         serializer = GameListSerializer(latest_games, many=True, context={'user': user})
         return std_response(
             data=serializer.data,
@@ -648,10 +664,15 @@ def recently_played_games(request, user_id):
         )
     
     # 최근 플레이한 게임
-    recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
+    recently_played_games = with_game_list_optimizations(
+        Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct(),
+        user,
+    )
 
     # 리턴
-    if recently_played_games:
+    # 주의: prefetch가 걸린 쿼리셋을 truthy 평가하면 전체 결과를 메모리에 올려 페이지네이션이 무력화되므로
+    # exists()로 가벼운 존재 확인만 수행한다.
+    if recently_played_games.exists():
         # 페이지네이션 적용
         paginator = CustomPagination()
         paginated_data = paginator.paginate_queryset(recently_played_games, request)
