@@ -522,7 +522,7 @@ def like_games(request, user_id):
             data={},
             message=f"{request.user}가 즐겨찾기한 게임이 없습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            status_code=status.HTTP_200_OK
         )
 
     # N+1 제거: maker/chip/category 프리페치 + is_liked(프로필 주인 기준) annotate
@@ -693,7 +693,7 @@ def recently_played_games(request, user_id):
             data={},
             message="최근 플레이한 게임이 존재하지 않습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            status_code=status.HTTP_200_OK
         )
 
 
@@ -714,7 +714,7 @@ def teambuild_posts(request, user_id):
             data={},
             message=f"{request.user}가 작성한 팀빌딩 모집글이 없습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            status_code=status.HTTP_200_OK
         )
     # 다른 사람의 프로필을 조회하는 경우, '모집중' 상태의 글만 보이도록 필터링
     if user != request.user:
