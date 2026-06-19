@@ -797,8 +797,10 @@ class TeamBuildPostCommentAPIView(APIView):
     def get(self, request, post_id):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
-        # 모든 댓글 가져오기
-        comments = TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        # 모든 댓글 가져오기 (author N+1 제거)
+        comments = with_teambuild_comment_list_optimizations(
+            TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        )
 
         # 정렬 조건 적용
         if order == 'old':
