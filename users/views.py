@@ -25,6 +25,7 @@ from games.querysets import with_game_list_optimizations
 from games.serializers import GameListSerializer
 from teambuildings.models import TeamBuildPost
 from teambuildings.pagination import MyTeamBuildPostPagination
+from teambuildings.querysets import with_teambuild_post_list_optimizations
 from teambuildings.serializers import TeamBuildPostSerializer
 from qnas.models import DeleteUsers
 
@@ -723,6 +724,9 @@ def teambuild_posts(request, user_id):
     # 다른 사람의 프로필을 조회하는 경우, '모집중' 상태의 글만 보이도록 필터링
     if user != request.user:
         teambuild_posts = teambuild_posts.filter(deadline__gte=timezone.now().date())
+
+    # N+1 제거: author/want_roles 프리페치
+    teambuild_posts = with_teambuild_post_list_optimizations(teambuild_posts)
 
     # 페이지네이션
     paginator = MyTeamBuildPostPagination()
