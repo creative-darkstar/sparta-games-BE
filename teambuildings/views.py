@@ -1064,7 +1064,9 @@ class CreateTeamBuildProfileAPIView(APIView):
 
         # 페이지네이션 적용
         paginator = TeamBuildProfileListPagination()
-        paginated_profiles = paginator.paginate_queryset(profiles, request)
+        paginated_profiles = paginator.paginate_queryset(
+            with_teambuild_profile_list_optimizations(profiles), request
+        )
         serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
 
@@ -1303,7 +1305,9 @@ def teambuild_profile_search(request):
 
     # 페이지네이션 적용
     paginator = TeamBuildProfileListPagination()
-    paginated_teambuild_profiles = paginator.paginate_queryset(teambuild_profiles, request)
+    paginated_teambuild_profiles = paginator.paginate_queryset(
+        with_teambuild_profile_list_optimizations(teambuild_profiles), request
+    )
     serializer = TeamBuildProfileSerializer(paginated_teambuild_profiles, many=True)
     response_data = paginator.get_paginated_response(serializer.data).data
 
