@@ -120,10 +120,11 @@ class ProfileAPIView(APIView):
             )
         
         # 관심 게임 카테고리
-        categories = request.data.get("game_category", '')
-        categories = categories.split(',')
-        if categories:
-            game_categories = GameCategory.objects.filter(name__in=categories)
+        # game_category 미전송(또는 빈 값)이면 기존 카테고리를 유지하고, 값이 있을 때만 검증 후 갱신한다.
+        category_param = request.data.get("game_category", "")
+        category_names = [name for name in category_param.split(',') if name]
+        if category_names:
+            game_categories = GameCategory.objects.filter(name__in=category_names)
             if not game_categories.exists():
                 return std_response(
                     message="올바른 game category를 입력해주세요.",
@@ -132,8 +133,6 @@ class ProfileAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             user.game_category.set(game_categories)
-        else:
-            categories = list(user.game_category.values_list('id', flat=True))
         
         # # 이메일 검증
         # email = self.request.data.get('email', user.email)
