@@ -39,5 +39,6 @@ class GameRegisterListSerializer(serializers.ModelSerializer):
         return [{"id": category.id, "name": category.name,} for category in obj.category.all()]
     
     def get_game_register_logs(self, obj):
-        # 로그 리스트를 반환
-        return [{"created_at": log.created_at, "content": log.content} for log in obj.logs_game.filter(game=obj).order_by("-created_at")][:2]
+        # 로그 리스트를 반환 (prefetch된 logs_game 캐시를 사용하기 위해 .all() 사용)
+        # Prefetch에서 -created_at 정렬을 적용하므로 앞에서 2개가 최신 로그다.
+        return [{"created_at": log.created_at, "content": log.content} for log in obj.logs_game.all()[:2]]
