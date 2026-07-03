@@ -1502,23 +1502,24 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        # 삭제될 이미지 src 수집 (S3 삭제는 커밋 후 수행)
         rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
         srcs = [x.src for x in rows]
-        
-        if rows and srcs:
-            # DB 데이터 삭제
-            rows.delete()
-            
-            # S3 오브젝트 삭제
-            # S3 클라이언트 불러오기
+
+        # DB 작업은 원자적으로 처리 (이미지 DB 삭제 + 프로필 완전 삭제)
+        with transaction.atomic():
+            if srcs:
+                rows.delete()
+            profile.delete()
+
+        # 외부 I/O: S3 오브젝트 삭제 (트랜잭션 커밋 후)
+        if srcs:
             s3 = boto3.client(
                 's3',
                 aws_access_key_id=AWS_AUTH["aws_access_key_id"],
                 aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
                 region_name=AWS_S3_REGION_NAME,
             )
-            # 삭제
             s3.delete_objects(
                 Bucket=AWS_S3_BUCKET_NAME,
                 Delete={
@@ -1526,9 +1527,6 @@ class TeamBuildProfileAPIView(APIView):
                 }
             )
 
-        # 팀빌딩 프로필 완전 삭제
-        profile.delete()
-        
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
             status="success",
