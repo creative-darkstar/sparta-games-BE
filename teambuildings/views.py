@@ -27,6 +27,11 @@ from .pagination import (
     TeamBuildProfileListPagination,
     TeamBuildPostCommentPagination,
 )
+from .querysets import (
+    with_teambuild_post_list_optimizations,
+    with_teambuild_profile_list_optimizations,
+    with_teambuild_comment_list_optimizations,
+)
 from .serializers import (
     TeamBuildPostSerializer,
     TeamBuildPostDetailSerializer,
@@ -117,45 +122,46 @@ class TeamBuildPostAPIView(APIView):
             )
         ).order_by('is_open_priority', '-create_dt')
         # 마감하지 않은 것만 추천하도록 조건 추가
-        recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
+        recommended_base = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=today)
 
-        # 추천게시글/마감임박 게시글
-        if not request.user.is_authenticated:
-            # 비회원 유저 : 마감 임박 4개
-            recommendedposts = recommendedposts.order_by('deadline')[:4]
-        else:
-            # 유저 프로필 존재 여부 확인
+        # 추천게시글 PK 수집 (최대 4개)
+        # - 로그인 + 프로필 보유: 맞춤 글(역할/목적/기간) 우선, 부족하면 마감 임박 글로 채움
+        # - 비회원 또는 프로필 미보유: 마감 임박 4개
+        # 슬라이스/`|` 결합 쿼리셋은 select_related/prefetch_related가 유지되지 않으므로,
+        # 먼저 PK만 모은 뒤 최적화된 단일 쿼리로 조회하고 수집 순서를 보존한다.
+        profile = None
+        if request.user.is_authenticated:
             profile = TeamBuildProfile.objects.filter(author=request.user).first()
-            
-            if profile:
-                # 프로필 존재하면 직업 필터
-                my_role = profile.my_role
-                purpose = profile.purpose
-                duration = profile.duration
 
-                valid_duration = get_valid_duration_keys(duration)
-
-                _qs = recommendedposts.filter(
-                    want_roles=my_role,
-                    purpose=purpose,
+        if profile:
+            valid_duration = get_valid_duration_keys(profile.duration)
+            recommended_ids = list(
+                recommended_base.filter(
+                    want_roles=profile.my_role,
+                    purpose=profile.purpose,
                     duration__in=valid_duration,
-                ).order_by('-create_dt')[:4]
-                
-                # 맞춤 팀빌딩 모집글 개수가 4개 미만인 경우, 마감 임박 글을 추가하도록 수정
-                curr_cnt = _qs.count()
-                if curr_cnt < 4:
-                    # 마감 임박 팀빌딩 모집글 리스트
-                    # 맞춤 팀빌딩 모집글에 있는 경우 제외 (.exclude(pk__in=[row.pk for row in _qs]))
-                    # 마감 임박 팀빌딩 모집글 리스트는 본래 마감기한 순으로 정렬됨 (.order_by('deadline'))
-                    # (4 - 맞춤 팀빌딩 모집글 개수) 개수만큼 가져옴 ([:4 - curr_cnt])
-                    _extra_qs = recommendedposts.exclude(pk__in=[row.pk for row in _qs]).order_by('deadline')[:4 - curr_cnt]
-                    # 최종적으로 4개로 제한 (이중 체크)
-                    recommendedposts = (_qs | _extra_qs)[:4]
-                else:
-                    recommendedposts = _qs
-            else:
-                # 유저 프로필이 없으면 마감 임박 4개
-                recommendedposts = recommendedposts.order_by('deadline')[:4]
+                ).order_by('-create_dt').values_list('id', flat=True)[:4]
+            )
+            if len(recommended_ids) < 4:
+                extra_ids = list(
+                    recommended_base.exclude(pk__in=recommended_ids)
+                    .order_by('deadline')
+                    .values_list('id', flat=True)[:4 - len(recommended_ids)]
+                )
+                recommended_ids += extra_ids
+        else:
+            recommended_ids = list(
+                recommended_base.order_by('deadline').values_list('id', flat=True)[:4]
+            )
+
+        # 최적화된 단일 쿼리로 조회 후 수집 순서대로 재정렬
+        recommended_map = {
+            post.id: post
+            for post in with_teambuild_post_list_optimizations(
+                TeamBuildPost.objects.filter(pk__in=recommended_ids)
+            )
+        }
+        recommendedposts = [recommended_map[pk] for pk in recommended_ids if pk in recommended_map]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
@@ -223,17 +229,17 @@ class TeamBuildPostAPIView(APIView):
 
         # 페이지네이션
         paginator = TeamBuildPostPagination()
-        paginated_posts = paginator.paginate_queryset(teambuildposts, request)
+        paginated_posts = paginator.paginate_queryset(
+            with_teambuild_post_list_optimizations(teambuildposts), request
+        )
         serializer = TeamBuildPostSerializer(paginated_posts, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
 
         # 추천 게시글 직렬화
         recommended_serializer = RecommendedTeamBuildPostSerializer(recommendedposts, many=True)
 
-        # 프로필 존재 여부
-        profile_exists = False
-        if request.user.is_authenticated:
-            profile_exists = TeamBuildProfile.objects.filter(author=request.user).exists()
+        # 프로필 존재 여부 (위에서 조회한 profile 재사용)
+        profile_exists = profile is not None
 
         data = {
             "teambuild_posts": response_data["results"],
@@ -472,7 +478,9 @@ def teambuild_post_search(request):
 
     # 페이지네이션
     paginator = TeamBuildPostPagination()
-    paginated_teambuild_posts = paginator.paginate_queryset(teambuild_posts, request)
+    paginated_teambuild_posts = paginator.paginate_queryset(
+        with_teambuild_post_list_optimizations(teambuild_posts), request
+    )
     _serializer = TeamBuildPostSerializer(paginated_teambuild_posts, many=True)
     response_data = paginator.get_paginated_response(_serializer.data).data
 
@@ -789,8 +797,10 @@ class TeamBuildPostCommentAPIView(APIView):
     def get(self, request, post_id):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
-        # 모든 댓글 가져오기
-        comments = TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        # 모든 댓글 가져오기 (author N+1 제거)
+        comments = with_teambuild_comment_list_optimizations(
+            TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        )
 
         # 정렬 조건 적용
         if order == 'old':
@@ -1056,7 +1066,9 @@ class CreateTeamBuildProfileAPIView(APIView):
 
         # 페이지네이션 적용
         paginator = TeamBuildProfileListPagination()
-        paginated_profiles = paginator.paginate_queryset(profiles, request)
+        paginated_profiles = paginator.paginate_queryset(
+            with_teambuild_profile_list_optimizations(profiles), request
+        )
         serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
 
@@ -1295,7 +1307,9 @@ def teambuild_profile_search(request):
 
     # 페이지네이션 적용
     paginator = TeamBuildProfileListPagination()
-    paginated_teambuild_profiles = paginator.paginate_queryset(teambuild_profiles, request)
+    paginated_teambuild_profiles = paginator.paginate_queryset(
+        with_teambuild_profile_list_optimizations(teambuild_profiles), request
+    )
     serializer = TeamBuildProfileSerializer(paginated_teambuild_profiles, many=True)
     response_data = paginator.get_paginated_response(serializer.data).data
 
