@@ -1161,55 +1161,57 @@ class CreateTeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # 5. 프로필 생성
-        profile = TeamBuildProfile.objects.create(
-            author=author,
-            image=profile_image,
-            career=career,
-            my_role=my_role,
-            tech_stack=tech_stack,
-            portfolio=portfolio,  # JSONField에 list 직접 저장 가능
-            purpose=purpose,
-            duration=duration,
-            meeting_type=meeting_type,
-            contact=contact,
-            title=title,
-            content=content,
-        )
-        profile.game_genre.set(game_genres)
-
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        # content 에서 img src 파싱
-        srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        for src in srcs:
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(profile),
-                content_id=profile.id,
-                uploader=author,
-                src=src,
-                is_used=True
+        # 5. DB 작업은 원자적으로 처리 (프로필 생성 + 장르 + content 이미지 DB 등록)
+        with transaction.atomic():
+            profile = TeamBuildProfile.objects.create(
+                author=author,
+                image=profile_image,
+                career=career,
+                my_role=my_role,
+                tech_stack=tech_stack,
+                portfolio=portfolio,  # JSONField에 list 직접 저장 가능
+                purpose=purpose,
+                duration=duration,
+                meeting_type=meeting_type,
+                contact=contact,
+                title=title,
+                content=content,
             )
+            profile.game_genre.set(game_genres)
 
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
-                }
+            # content 에서 img src 파싱 후 DB 등록
+            srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            for src in srcs:
+                UploadImage.objects.create(
+                    content_type=ContentType.objects.get_for_model(profile),
+                    content_id=profile.id,
+                    uploader=author,
+                    src=src,
+                    is_used=True
+                )
+
+        # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
+        if srcs:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
             )
+            for src in srcs:
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [
+                            {
+                                'Key': 'is_used',
+                                'Value': 'true'
+                            }
+                        ]
+                    }
+                )
 
         return std_response(
             data={"profile_id": profile.id},
