@@ -556,94 +556,23 @@ class TeamBuildPostDetailAPIView(APIView):
             )
         
         data = request.data
-        changes = []
 
-        # title
-        title = data.get("title", post.title)
-        if title != post.title:
-            changes.append("title")
-            post.title = title
-
-        # content
-        content = data.get("content", post.content)
-        if content != post.content:
-            changes.append("content")
-            post.content = content
-        
-            # content 에서 img src 파싱
-            old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
-            new_srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-            
-            # S3 클라이언트 불러오기
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            
-            # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
-            delete_srcs = set(old_srcs) - set(new_srcs)
-            if delete_srcs:
-                # DB 데이터 삭제
-                for src in delete_srcs:
-                    obj = UploadImage.objects.get(src=src)
-                    obj.delete()
-                # S3 오브젝트 삭제
-                s3.delete_objects(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Delete={
-                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                    }
+        # ---- 검증 먼저 (DB/S3 변경 전에 모두 수행) ----
+        # deadline 파싱/검증
+        deadline_raw = data.get("deadline")
+        parsed_deadline = None
+        if deadline_raw:
+            try:
+                parsed_deadline = datetime.strptime(deadline_raw, "%Y-%m-%d").date()
+            except ValueError:
+                return std_response(
+                    message="마감일은 YYYY-MM-DD 형식이어야 합니다.",
+                    status="error",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
-                
-            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
-            add_srcs = set(new_srcs) - set(old_srcs)
-            if add_srcs:
-                # DB 데이터 추가
-                _add_file_data = [
-                    UploadImage(
-                        content_type=ContentType.objects.get_for_model(post),
-                        content_id=post.id,
-                        uploader=request.user,
-                        src=x,
-                        is_used=True
-                    ) for x in add_srcs
-                ]
-                UploadImage.objects.bulk_create(_add_file_data)
-                # S3 오브젝트 태깅
-                for src in add_srcs:
-                    s3_file_key = urlparse(src).path.lstrip('/')
-                    s3.put_object_tagging(
-                        Bucket=AWS_S3_BUCKET_NAME,
-                        Key=s3_file_key,
-                        Tagging={
-                            'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
-                        }
-                    )
 
-        # contact
-        contact = data.get("contact", post.contact)
-        if contact != post.contact:
-            changes.append("contact")
-            post.contact = contact
-
-        # thumbnail
-        thumbnail = request.FILES.get("thumbnail", None)
-        thumbnail_basic = request.data.get("thumbnail_basic", None)
-        if thumbnail:
-            # 기존 썸네일 삭제(메인에서 활성화)
-            # if post.thumbnail:
-            #    default_storage.delete(post.thumbnail.name)
-            #    post.thumbnail.delete(save=False)
-            changes.append("thumbnail")
-            post.thumbnail = thumbnail
-        elif thumbnail_basic == "default":
-            # 기본 이미지로 설정
-            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
-            changes.append("thumbnail")
-
-        # 선택지 유효성 검증 (필드 변경 시만 적용)
+        # 선택지 유효성 검증 (필드 변경 시만)
         for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES),]:
             value = data.get(field)
             if value and value != getattr(post, field):
@@ -659,26 +588,8 @@ class TeamBuildPostDetailAPIView(APIView):
                         error_code="CLIENT_FAIL",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
-                setattr(post, field, value)
-                changes.append(field)
 
-        # deadline
-        deadline = data.get("deadline")
-        if deadline:
-            try:
-                deadline = datetime.strptime(deadline, "%Y-%m-%d").date()
-                if deadline != post.deadline:
-                    post.deadline = deadline
-                    changes.append("deadline")
-            except ValueError:
-                return std_response(
-                    message="마감일은 YYYY-MM-DD 형식이어야 합니다.",
-                    status="error",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-
-        # want_roles
+        # want_roles 검증
         raw_roles = data.getlist("want_roles", [])
         want_roles, role_error = validate_want_roles(raw_roles)
         if role_error:
@@ -688,13 +599,109 @@ class TeamBuildPostDetailAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        if want_roles:
-            post.want_roles.set(Role.objects.filter(name__in=want_roles))
-            changes.append("want_roles")
 
-        # 변경사항이 있으면 저장
-        if changes:
-            post.save()
+        # content 이미지 변경 계산 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
+        content = data.get("content", post.content)
+        content_changed = content != post.content
+        delete_srcs = set()
+        add_srcs = set()
+        if content_changed:
+            old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
+            new_srcs = extract_srcs(content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            delete_srcs = set(old_srcs) - set(new_srcs)
+            add_srcs = set(new_srcs) - set(old_srcs)
+
+        # ---- DB 작업은 원자적으로 처리 ----
+        changes = []
+        with transaction.atomic():
+            # title
+            title = data.get("title", post.title)
+            if title != post.title:
+                changes.append("title")
+                post.title = title
+
+            # content
+            if content_changed:
+                changes.append("content")
+                post.content = content
+                # 사라진 이미지 DB 삭제
+                if delete_srcs:
+                    UploadImage.objects.filter(src__in=delete_srcs).delete()
+                # 추가된 이미지 DB 등록
+                if add_srcs:
+                    UploadImage.objects.bulk_create([
+                        UploadImage(
+                            content_type=ContentType.objects.get_for_model(post),
+                            content_id=post.id,
+                            uploader=request.user,
+                            src=x,
+                            is_used=True
+                        ) for x in add_srcs
+                    ])
+
+            # contact
+            contact = data.get("contact", post.contact)
+            if contact != post.contact:
+                changes.append("contact")
+                post.contact = contact
+
+            # thumbnail
+            thumbnail = request.FILES.get("thumbnail", None)
+            thumbnail_basic = request.data.get("thumbnail_basic", None)
+            if thumbnail:
+                changes.append("thumbnail")
+                post.thumbnail = thumbnail
+            elif thumbnail_basic == "default":
+                post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+                changes.append("thumbnail")
+
+            # 선택지 적용 (위에서 검증 완료)
+            for field in ("purpose", "duration", "meeting_type"):
+                value = data.get(field)
+                if value and value != getattr(post, field):
+                    setattr(post, field, value)
+                    changes.append(field)
+
+            # deadline 적용
+            if parsed_deadline and parsed_deadline != post.deadline:
+                post.deadline = parsed_deadline
+                changes.append("deadline")
+
+            # want_roles 적용
+            if want_roles:
+                post.want_roles.set(Role.objects.filter(name__in=want_roles))
+                changes.append("want_roles")
+
+            # 변경사항이 있으면 저장
+            if changes:
+                post.save()
+
+        # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
+        if delete_srcs or add_srcs:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 사라진 이미지 S3 삭제
+            if delete_srcs:
+                s3.delete_objects(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Delete={
+                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+                    }
+                )
+            # 추가된 이미지 S3 태깅
+            for src in add_srcs:
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
+                    }
+                )
 
         return std_response(
             data={
