@@ -21,6 +21,7 @@ from .models import (
 from .pagination import (
     GameRegisterListPagination,
 )
+from .querysets import with_game_register_list_optimizations
 from .serializers import (
     QnAPostListSerializer,
     CategorySerializer,
@@ -206,7 +207,7 @@ def game_register_list(request):
     if keyword_q:
         query &= Q(title__icontains=keyword_q) | Q(maker__nickname__icontains=keyword_q)
     
-    rows = Game.objects.filter(query).distinct()
+    rows = with_game_register_list_optimizations(Game.objects.filter(query).distinct())
 
     # 페이지네이션
     paginator = GameRegisterListPagination()
