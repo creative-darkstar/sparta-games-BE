@@ -331,62 +331,62 @@ class TeamBuildPostAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # 객체 생성
-        post = TeamBuildPost.objects.create(
-            author=user,
-            title=request.data.get("title"),
-            purpose=request.data.get("purpose"),
-            duration=request.data.get("duration"),
-            meeting_type=request.data.get("meeting_type"),
-            deadline=deadline,
-            contact=request.data.get("contact"),
-            content=request.data.get("content"),
-        )
-
-        # 썸네일 할당
-        if thumbnail:
-            post.thumbnail = thumbnail
-        elif thumbnail_basic == "default":
-            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
-        post.save()
-
-        # 역할 추가
-        post.want_roles.set(Role.objects.filter(name__in=want_roles))
-
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        # content 에서 img src 파싱
-        srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        for src in srcs:
-            # DB 등록
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(post),
-                content_id=post.id,
-                uploader=user,
-                src=src,
-                is_used=True
+        # DB 작업은 원자적으로 처리 (게시글 생성 + 썸네일 + 역할 + content 이미지 DB 등록)
+        with transaction.atomic():
+            post = TeamBuildPost.objects.create(
+                author=user,
+                title=request.data.get("title"),
+                purpose=request.data.get("purpose"),
+                duration=request.data.get("duration"),
+                meeting_type=request.data.get("meeting_type"),
+                deadline=deadline,
+                contact=request.data.get("contact"),
+                content=request.data.get("content"),
             )
-            
-            # S3 태깅하기
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
-                }
+
+            # 썸네일 할당
+            if thumbnail:
+                post.thumbnail = thumbnail
+            elif thumbnail_basic == "default":
+                post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+            post.save()
+
+            # 역할 추가
+            post.want_roles.set(Role.objects.filter(name__in=want_roles))
+
+            # content 에서 img src 파싱 후 DB 등록
+            srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            for src in srcs:
+                UploadImage.objects.create(
+                    content_type=ContentType.objects.get_for_model(post),
+                    content_id=post.id,
+                    uploader=user,
+                    src=src,
+                    is_used=True
+                )
+
+        # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
+        if srcs:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
             )
+            for src in srcs:
+                s3_file_key = urlparse(src).path.lstrip('/')
+                s3.put_object_tagging(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Key=s3_file_key,
+                    Tagging={
+                        'TagSet': [
+                            {
+                                'Key': 'is_used',
+                                'Value': 'true'
+                            }
+                        ]
+                    }
+                )
 
         return std_response(
             data={"post_id": post.pk},
