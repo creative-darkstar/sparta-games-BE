@@ -1392,24 +1392,19 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 프로필 이미지 처리
+        # 프로필 이미지 처리 (S3 업로드는 save() 시점)
         if "image" in request.data:
             if request.data.get("image") == "":
                 profile.image = None
             elif request.FILES.get("image"):
                 profile.image = request.FILES["image"]
 
-        # 각 필드 업데이트
+        # 각 필드 업데이트 (메모리)
         profile.career = request.data.get("career", profile.career)
 
         role_name = request.data.get("my_role")
         if role_name:
             profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
-
-        game_genres = request.data.getlist("game_genre")
-        if game_genres:
-            genres = GameCategory.objects.filter(name__in=game_genres)
-            profile.game_genre.set(genres)
 
         profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
         profile.purpose = request.data.get("purpose", profile.purpose)
@@ -1419,6 +1414,7 @@ class TeamBuildProfileAPIView(APIView):
         profile.title = request.data.get("title", profile.title)
         profile.content = request.data.get("content", profile.content)
 
+        # portfolio 검증 (DB/S3 변경 전)
         portfolio, error = parse_links(request.data)
         if error:
             return std_response(
@@ -1428,51 +1424,54 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
         profile.portfolio = portfolio
-        
-        # 이미지 처리
-        # content 에서 img src 파싱
+
+        game_genres = request.data.getlist("game_genre")
+
+        # content 이미지 처리 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
         new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-        
-        # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
         delete_srcs = set(old_srcs) - set(new_srcs)
-        if delete_srcs:
-            # DB 데이터 삭제
-            for src in delete_srcs:
-                obj = UploadImage.objects.get(src=src)
-                obj.delete()
-            # S3 오브젝트 삭제
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                }
-            )
-        
-        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
         add_srcs = set(new_srcs) - set(old_srcs)
-        if add_srcs:
-            # DB 데이터 추가
-            _add_file_data = [
-                UploadImage(
-                    content_type=ContentType.objects.get_for_model(profile),
-                    content_id=profile.id,
-                    uploader=request.user,
-                    src=x,
-                    is_used=True
-                ) for x in add_srcs
-            ]
-            UploadImage.objects.bulk_create(_add_file_data)
-            # S3 오브젝트 태깅
-            for src in set(new_srcs) - set(old_srcs):
+
+        # ---- DB 작업은 원자적으로 처리 ----
+        with transaction.atomic():
+            # 장르 갱신
+            if game_genres:
+                profile.game_genre.set(GameCategory.objects.filter(name__in=game_genres))
+            # 사라진 이미지 DB 삭제
+            if delete_srcs:
+                UploadImage.objects.filter(src__in=delete_srcs).delete()
+            # 추가된 이미지 DB 등록
+            if add_srcs:
+                UploadImage.objects.bulk_create([
+                    UploadImage(
+                        content_type=ContentType.objects.get_for_model(profile),
+                        content_id=profile.id,
+                        uploader=request.user,
+                        src=x,
+                        is_used=True
+                    ) for x in add_srcs
+                ])
+            profile.save()
+
+        # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
+        if delete_srcs or add_srcs:
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
+                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
+                region_name=AWS_S3_REGION_NAME,
+            )
+            # 사라진 이미지 S3 삭제
+            if delete_srcs:
+                s3.delete_objects(
+                    Bucket=AWS_S3_BUCKET_NAME,
+                    Delete={
+                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
+                    }
+                )
+            # 추가된 이미지 S3 태깅
+            for src in add_srcs:
                 s3_file_key = urlparse(src).path.lstrip('/')
                 s3.put_object_tagging(
                     Bucket=AWS_S3_BUCKET_NAME,
@@ -1481,8 +1480,6 @@ class TeamBuildProfileAPIView(APIView):
                         'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
                     }
                 )
-
-        profile.save()
 
         serializer = TeamBuildProfileSerializer(profile)
         return std_response(
