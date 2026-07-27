@@ -4,6 +4,7 @@ import logging
 import uuid
 import time
 
+from asgiref.sync import sync_to_async
 from django.utils.deprecation import MiddlewareMixin
 from rest_framework.response import Response
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -124,12 +125,12 @@ class RequestContextMiddleware(MiddlewareMixin):
                     raw_token = self.jwt_authenticator.get_raw_token(header)
                     if raw_token is not None:
                         validated_token = self.jwt_authenticator.get_validated_token(raw_token)
-                        user = self.jwt_authenticator.get_user(validated_token)
+                        user = await sync_to_async(self.jwt_authenticator.get_user)(validated_token)
                         request.user = user  # Django 레벨에서 user 세팅
             except Exception:
                 # 토큰이 없거나 잘못된 경우에는 그냥 anonymous 유지
                 user = None
-            
+
             if user and request.user.is_authenticated:
                 user_id = request.user.pk
             else:

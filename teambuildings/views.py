@@ -1,10 +1,9 @@
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 import requests  # S3 사용
 from urllib.parse import urlparse
-
-import boto3
 
 from django.utils import timezone
 from django.db import transaction
@@ -45,9 +44,11 @@ from .utils import validate_want_roles, validate_choice, extract_srcs, parse_lin
 from games.models import GameCategory
 from games.utils import validate_image
 
-from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
-from spartagames.utils import std_response
+from spartagames.config import AWS_S3_BUCKET_NAME, AWS_S3_BUCKET_IMAGES
+from spartagames.utils import std_response, get_s3_client, safe_s3_delete, safe_s3_tag
 from commons.models import UploadImage
+
+logger = logging.getLogger("sparta_games")
 
 
 @api_view(["GET"])
@@ -367,25 +368,18 @@ class TeamBuildPostAPIView(APIView):
 
         # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
         if srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            for src in srcs:
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [
-                            {
-                                'Key': 'is_used',
-                                'Value': 'true'
-                            }
-                        ]
-                    }
+            try:
+                s3 = get_s3_client()
+                for src in srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"post {post.pk}: S3 tagging failed on create: {e}", exc_info=True)
+                return std_response(
+                    message="게시글은 등록되었으나 이미지 처리 중 오류가 발생했습니다.",
+                    status="warning",
+                    data={"post_id": post.pk},
+                    status_code=status.HTTP_201_CREATED
                 )
 
         return std_response(
@@ -614,6 +608,9 @@ class TeamBuildPostDetailAPIView(APIView):
         # ---- DB 작업은 원자적으로 처리 ----
         changes = []
         with transaction.atomic():
+            # 동시 수정 방지를 위해 트랜잭션 내에서 행 잠금 후 재조회
+            post = TeamBuildPost.objects.select_for_update().get(id=post_id)
+
             # title
             title = data.get("title", post.title)
             if title != post.title:
@@ -675,32 +672,28 @@ class TeamBuildPostDetailAPIView(APIView):
             # 변경사항이 있으면 저장
             if changes:
                 post.save()
+                logger.info(f"post {post_id}: saved with changes={changes}")
 
         # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
         if delete_srcs or add_srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            # 사라진 이미지 S3 삭제
-            if delete_srcs:
-                s3.delete_objects(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Delete={
-                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                    }
-                )
-            # 추가된 이미지 S3 태깅
-            for src in add_srcs:
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
-                    }
+            try:
+                s3 = get_s3_client()
+                # 사라진 이미지 S3 삭제
+                if delete_srcs:
+                    keys_to_delete = [urlparse(x).path.lstrip('/') for x in delete_srcs]
+                    safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+                # 추가된 이미지 S3 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                # S3 실패 시 DB는 이미 커밋되어 안전, 로그에 기록
+                logger.error(f"post {post_id}: S3 operation failed: {e}", exc_info=True)
+                return std_response(
+                    message="이미지 처리 중 오류가 발생했습니다. 관리자에게 문의해주세요.",
+                    status="fail",
+                    error_code="SERVER_FAIL",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
         return std_response(
@@ -722,6 +715,7 @@ class TeamBuildPostDetailAPIView(APIView):
             return post
         # 권한 확인
         if request.user != post.author and not request.user.is_staff:
+            logger.warning(f"post {post_id}: unauthorized delete attempt by user {request.user.id}")
             return std_response(
                 message="작성자만 삭제할 수 있습니다.",
                 status="fail",
@@ -739,21 +733,23 @@ class TeamBuildPostDetailAPIView(APIView):
                 rows.delete()
             post.is_visible = False
             post.save()
+            logger.info(f"post {post_id}: deleted by user {request.user.id} ({len(srcs)} images to clean)")
 
         # 외부 I/O: S3 오브젝트 삭제 (트랜잭션 커밋 후)
         if srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
-                }
-            )
+            try:
+                s3 = get_s3_client()
+                keys_to_delete = [urlparse(x).path.lstrip('/') for x in srcs]
+                safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+            except Exception as e:
+                # DB는 이미 삭제 커밋됨. S3 정리 실패는 로그로 남기고 별도 정리 대상으로 표시
+                # (향후 Celery 비동기 정리 작업으로 개선 예정)
+                logger.error(f"post {post_id}: S3 deletion failed: {e}", exc_info=True)
+                return std_response(
+                    message="게시글은 삭제되었으나 이미지 정리 중 오류가 발생했습니다.",
+                    status="warning",
+                    status_code=status.HTTP_200_OK
+                )
 
         return std_response(
             message="팀빌딩 게시글이 삭제되었습니다.",
@@ -1199,25 +1195,18 @@ class CreateTeamBuildProfileAPIView(APIView):
 
         # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
         if srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            for src in srcs:
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [
-                            {
-                                'Key': 'is_used',
-                                'Value': 'true'
-                            }
-                        ]
-                    }
+            try:
+                s3 = get_s3_client()
+                for src in srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"profile {profile.id}: S3 tagging failed on create: {e}", exc_info=True)
+                return std_response(
+                    message="프로필은 등록되었으나 이미지 처리 중 오류가 발생했습니다.",
+                    status="warning",
+                    data={"profile_id": profile.id},
+                    status_code=status.HTTP_201_CREATED
                 )
 
         return std_response(
@@ -1392,49 +1381,53 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 프로필 이미지 처리 (S3 업로드는 save() 시점)
-        if "image" in request.data:
-            if request.data.get("image") == "":
-                profile.image = None
-            elif request.FILES.get("image"):
-                profile.image = request.FILES["image"]
-
-        # 각 필드 업데이트 (메모리)
-        profile.career = request.data.get("career", profile.career)
-
-        role_name = request.data.get("my_role")
-        if role_name:
-            profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
-
-        profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
-        profile.purpose = request.data.get("purpose", profile.purpose)
-        profile.duration = request.data.get("duration", profile.duration)
-        profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
-        profile.contact = request.data.get("contact", profile.contact)
-        profile.title = request.data.get("title", profile.title)
-        profile.content = request.data.get("content", profile.content)
-
-        # portfolio 검증 (DB/S3 변경 전)
+        # ---- 검증 먼저 (DB/S3 변경 전) ----
+        # portfolio 검증
         portfolio, error = parse_links(request.data)
         if error:
+            logger.warning(f"profile {profile.id}: invalid portfolio by user {request.user.id}")
             return std_response(
                 message=error,
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        profile.portfolio = portfolio
 
+        role_name = request.data.get("my_role")
         game_genres = request.data.getlist("game_genre")
+        new_content = request.data.get("content", profile.content)
 
-        # content 이미지 처리 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
+        # content 이미지 변경 계산 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
         old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
-        new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+        new_srcs = extract_srcs(new_content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
         delete_srcs = set(old_srcs) - set(new_srcs)
         add_srcs = set(new_srcs) - set(old_srcs)
 
         # ---- DB 작업은 원자적으로 처리 ----
         with transaction.atomic():
+            # 동시 수정 방지를 위해 트랜잭션 내에서 행 잠금 후 재조회
+            profile = TeamBuildProfile.objects.select_for_update().get(pk=profile.pk)
+
+            # 프로필 이미지 처리 (S3 업로드는 save() 시점)
+            if "image" in request.data:
+                if request.data.get("image") == "":
+                    profile.image = None
+                elif request.FILES.get("image"):
+                    profile.image = request.FILES["image"]
+
+            # 각 필드 업데이트 (메모리)
+            profile.career = request.data.get("career", profile.career)
+            if role_name:
+                profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
+            profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
+            profile.purpose = request.data.get("purpose", profile.purpose)
+            profile.duration = request.data.get("duration", profile.duration)
+            profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
+            profile.contact = request.data.get("contact", profile.contact)
+            profile.title = request.data.get("title", profile.title)
+            profile.content = new_content
+            profile.portfolio = portfolio
+
             # 장르 갱신
             if game_genres:
                 profile.game_genre.set(GameCategory.objects.filter(name__in=game_genres))
@@ -1453,32 +1446,27 @@ class TeamBuildProfileAPIView(APIView):
                     ) for x in add_srcs
                 ])
             profile.save()
+            logger.info(f"profile {profile.id}: updated by user {request.user.id}")
 
         # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
         if delete_srcs or add_srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            # 사라진 이미지 S3 삭제
-            if delete_srcs:
-                s3.delete_objects(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Delete={
-                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                    }
-                )
-            # 추가된 이미지 S3 태깅
-            for src in add_srcs:
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
-                    }
+            try:
+                s3 = get_s3_client()
+                # 사라진 이미지 S3 삭제
+                if delete_srcs:
+                    keys_to_delete = [urlparse(x).path.lstrip('/') for x in delete_srcs]
+                    safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+                # 추가된 이미지 S3 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"profile {profile.id}: S3 operation failed: {e}", exc_info=True)
+                return std_response(
+                    message="이미지 처리 중 오류가 발생했습니다. 관리자에게 문의해주세요.",
+                    status="fail",
+                    error_code="SERVER_FAIL",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
 
         serializer = TeamBuildProfileSerializer(profile)
@@ -1509,6 +1497,7 @@ class TeamBuildProfileAPIView(APIView):
             )
 
         # 삭제될 이미지 src 수집 (S3 삭제는 커밋 후 수행)
+        profile_id = profile.id
         rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
         srcs = [x.src for x in rows]
 
@@ -1517,21 +1506,21 @@ class TeamBuildProfileAPIView(APIView):
             if srcs:
                 rows.delete()
             profile.delete()
+            logger.info(f"profile {profile_id}: deleted by user {request.user.id} ({len(srcs)} images to clean)")
 
         # 외부 I/O: S3 오브젝트 삭제 (트랜잭션 커밋 후)
         if srcs:
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
-                }
-            )
+            try:
+                s3 = get_s3_client()
+                keys_to_delete = [urlparse(x).path.lstrip('/') for x in srcs]
+                safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+            except Exception as e:
+                logger.error(f"profile {profile_id}: S3 deletion failed: {e}", exc_info=True)
+                return std_response(
+                    message="프로필은 삭제되었으나 이미지 정리 중 오류가 발생했습니다.",
+                    status="warning",
+                    status_code=status.HTTP_200_OK
+                )
 
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
