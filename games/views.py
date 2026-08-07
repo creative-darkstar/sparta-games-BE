@@ -818,13 +818,15 @@ class ReviewAPIView(APIView):
             )
         game.star = game.star + ((star - game.star) / (game.review_cnt + 1))
         game.review_cnt = game.review_cnt + 1
-        game.save()
 
         serializer = ReviewSerializer(
             data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
-            serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
-            assign_chip_based_on_difficulty(game)
+            # 별점 갱신 + 리뷰 저장 + 칩 재계산을 원자적으로 처리
+            with transaction.atomic():
+                game.save()
+                serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
+                assign_chip_based_on_difficulty(game)
             # return Response(serializer.data, status=status.HTTP_201_CREATED)
             return std_response(
                 data=serializer.data,
@@ -912,12 +914,14 @@ class ReviewDetailAPIView(APIView):
                     error_code="CLIENT_FAIL"
                     )
             game.star = game.star + ((star - request.data.get('pre_star')) / (game.review_cnt))
-            game.save()
             serializer = ReviewSerializer(
                 review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
-                serializer.save()
-                assign_chip_based_on_difficulty(review.game)
+                # 별점 갱신 + 리뷰 수정 + 칩 재계산을 원자적으로 처리
+                with transaction.atomic():
+                    game.save()
+                    serializer.save()
+                    assign_chip_based_on_difficulty(review.game)
                 # return Response(serializer.data, status=status.HTTP_200_OK)
                 return std_response(
                     data=serializer.data,
@@ -976,10 +980,12 @@ class ReviewDetailAPIView(APIView):
             else:
                 game.star = 0
             game.review_cnt = game.review_cnt-1
-            game.save()
-            review.is_visible = False
-            review.save()
-            assign_chip_based_on_difficulty(review.game)
+            # 별점/리뷰수 갱신 + 리뷰 소프트삭제 + 칩 재계산을 원자적으로 처리
+            with transaction.atomic():
+                game.save()
+                review.is_visible = False
+                review.save()
+                assign_chip_based_on_difficulty(review.game)
             # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
             return std_response(
                 message="삭제를 완료했습니다",
@@ -1015,27 +1021,29 @@ def toggle_review_like(request, review_id):
             status_code=status.HTTP_404_NOT_FOUND,
             error_code="SERVER_FAIL"
         )
-    # ReviewsLike 객체를 가져오거나 새로 생성
-    # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
-    review_like, _ = ReviewsLike.objects.get_or_create(
-        user=user, review=review)
+    # 좋아요/싫어요 상태 조회·생성·저장을 원자적으로 처리
+    with transaction.atomic():
+        # ReviewsLike 객체를 가져오거나 새로 생성
+        # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
+        review_like, _ = ReviewsLike.objects.get_or_create(
+            user=user, review=review)
 
-    # 요청에서 받은 'action'에 따라 상태 변경
-    action = request.data.get('action', None)
-    if action == 'like':
-        if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
-            review_like.is_like = 1
-        else:
-            # 이미 'like' 상태일 경우 'no state'로 전환
-            review_like.is_like = 0
-    elif action == 'dislike':
-        if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
-            review_like.is_like = 2
-        else:
-            # 이미 'dislike' 상태일 경우 'no state'로 전환
-            review_like.is_like = 0
+        # 요청에서 받은 'action'에 따라 상태 변경
+        action = request.data.get('action', None)
+        if action == 'like':
+            if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
+                review_like.is_like = 1
+            else:
+                # 이미 'like' 상태일 경우 'no state'로 전환
+                review_like.is_like = 0
+        elif action == 'dislike':
+            if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
+                review_like.is_like = 2
+            else:
+                # 이미 'dislike' 상태일 경우 'no state'로 전환
+                review_like.is_like = 0
 
-    review_like.save()  # 변경 사항 저장
+        review_like.save()  # 변경 사항 저장
     # return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
     return std_response(
         message=f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다.",
