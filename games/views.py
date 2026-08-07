@@ -4,6 +4,7 @@ import re
 from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Count
 
 from rest_framework.decorators import api_view
@@ -39,7 +40,8 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
-from spartagames.utils import std_response
+from spartagames.utils import std_response, get_s3_client, safe_s3_delete
+from spartagames.config import AWS_S3_BUCKET_NAME
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
@@ -1120,34 +1122,26 @@ class GamePlaytimeAPIView(APIView):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 error_code="CLIENT_FAIL"
             )
-        if Game.objects.filter(pk=game_id, is_visible=True).exists():
-            try:
-                game = Game.objects.get(pk=game_id, is_visible=True)
-            except:
-                return std_response(
-                    message="게임이 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
-            playtime = PlayLog.objects.create(
-                user=request.user,
-                game=game,
-                start_at=timezone.now()  # 현재 시간으로 start_time
-            )
-            playtime_id = playtime.pk
-            # return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
-            return std_response(
-                data={
-                    "playtime_id":playtime_id
-                },
-                message="게임 플레이 시작시간 기록을 성공했습니다.",
-                status="success",
-                status_code=status.HTTP_200_OK
-            )
-        else:
-            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+        try:
+            game = Game.objects.get(pk=game_id, is_visible=True)
+        except Game.DoesNotExist:
+            return std_response(message="게임이 존재하지 않습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+
+        playtime = PlayLog.objects.create(
+            user=request.user,
+            game=game,
+            start_at=timezone.now()  # 현재 시간으로 start_time
+        )
+        playtime_id = playtime.pk
+        # return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                "playtime_id":playtime_id
+            },
+            message="게임 플레이 시작시간 기록을 성공했습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request, game_id):
         # 로그인 여부 확인
@@ -1159,58 +1153,49 @@ class GamePlaytimeAPIView(APIView):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 error_code="CLIENT_FAIL"
             )
-        if Game.objects.filter(pk=game_id, is_visible=True).exists():
-            # game=get_object_or_404(Game, pk=game_id, is_visible=True)
-            try:
-                game = Game.objects.get(pk=game_id, is_visible=True)
-            except:
-                return std_response(
-                    message="게임이 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
-            # playlog = get_object_or_404(PlayLog, pk=request.data.get("playtime_id"))
-            try:
-                playlog = PlayLog.objects.get(pk=request.data.get("playtime_id"))
-            except:
-                return std_response(
-                    message="로그가 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
-            totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
+        try:
+            game = Game.objects.get(pk=game_id, is_visible=True)
+        except Game.DoesNotExist:
+            return std_response(message="게임이 존재하지 않습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
 
-            playlog.end_at = timezone.now()  # 현재 시간으로 end_time
-            totalplaytime.latest_at = timezone.now()
-
-            totaltime = (playlog.end_at - playlog.start_at).total_seconds()
-            playlog.playtime = totaltime  # playtime_seconds로 playtime_seconds 계산
-            totalplaytime.totaltime = totalplaytime.totaltime + totaltime
-
-            playlog.save()
-            totalplaytime.save()
-            # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
-            #                 "start_time":playlog.start_at,
-            #                 "end_time":playlog.end_at,
-            #                 "playtime": playlog.playtime,
-            #                 "totalplaytime":totalplaytime.totaltime}
-            #                 , status=status.HTTP_200_OK)
+        try:
+            playlog = PlayLog.objects.get(pk=request.data.get("playtime_id"))
+        except PlayLog.DoesNotExist:
             return std_response(
-                data={
-                    "start_time":playlog.start_at,
-                    "end_time":playlog.end_at,
-                    "playtime": playlog.playtime,
-                    "totalplaytime":totalplaytime.totaltime
-                },
-                message="게임 플레이 종료시간 기록을 성공했습니다.",
-                status="success",
-                status_code=status.HTTP_200_OK
-            )
-        else:
-            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+                message="로그가 존재하지 않습니다.",
+                status="error",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+                )
+
+        totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
+
+        playlog.end_at = timezone.now()  # 현재 시간으로 end_time
+        totalplaytime.latest_at = timezone.now()
+
+        totaltime = (playlog.end_at - playlog.start_at).total_seconds()
+        playlog.playtime = totaltime  # playtime_seconds로 playtime_seconds 계산
+        totalplaytime.totaltime = totalplaytime.totaltime + totaltime
+
+        playlog.save()
+        totalplaytime.save()
+        # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
+        #                 "start_time":playlog.start_at,
+        #                 "end_time":playlog.end_at,
+        #                 "playtime": playlog.playtime,
+        #                 "totalplaytime":totalplaytime.totaltime}
+        #                 , status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                "start_time":playlog.start_at,
+                "end_time":playlog.end_at,
+                "playtime": playlog.playtime,
+                "totalplaytime":totalplaytime.totaltime
+            },
+            message="게임 플레이 종료시간 기록을 성공했습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)
