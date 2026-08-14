@@ -1,8 +1,13 @@
 from datetime import timedelta
+from django.contrib.auth import get_user_model
 from django.utils import timezone
 from celery import shared_task
 from django.db.models import Count, Q,Sum
 import logging
+import requests
+from commons.models import Notification
+from commons.utils import NotificationSubType, create_notification
+from spartagames.config import DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
 from .models import Game, Chip
 
 
@@ -161,3 +166,59 @@ def assign_review_top_chips():
         logger.info(f"Assigned 'Review Top' chip to {len(top_reviewed_games)} games.")
     except Exception as e:
         logger.error(f"Error in assigning 'Review Top' chips: {str(e)}", exc_info=True)
+
+
+@shared_task
+def send_discord_notification_task(game_id, msg_text="📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"):
+    """
+    game_id로 Game을 재조회한 뒤 Discord 웹훅을 전송합니다.
+    요청 경로에서 외부 I/O를 분리하기 위한 태스크입니다.
+    """
+    try:
+        game = Game.objects.select_related("maker").get(pk=game_id)
+    except Game.DoesNotExist:
+        logger.warning(f"send_discord_notification_task: Game {game_id} does not exist")
+        return
+
+    webhook_url = DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
+    message = {
+        "content": f"""
+{msg_text}
+🎮 게임명: {game.title}\n"
+👤 업로더: {game.maker.nickname}\n
+"""
+    }
+
+    try:
+        requests.post(webhook_url, json=message)
+        logger.info(f"send_discord_notification_task: Discord 알림 전송 완료 (game_id={game_id})")
+    except Exception as e:
+        logger.error(f"send_discord_notification_task: Discord 알림 실패 (game_id={game_id}): {e}", exc_info=True)
+
+
+@shared_task
+def notify_game_register_task(user_id, game_id, game_title):
+    """
+    game_id로 Game을 재조회한 뒤 검수요청 페이지 알림을 생성합니다.
+    유저는 탈퇴 유예 기간이 있어 태스크 실행 시점에 즉시 삭제되지 않으므로 재조회하지 않습니다.
+    """
+    try:
+        game = Game.objects.get(pk=game_id)
+    except Game.DoesNotExist:
+        logger.warning(f"notify_game_register_task: Game {game_id} does not exist")
+        return
+
+    User = get_user_model()
+    user = User(pk=user_id)
+
+    try:
+        create_notification(
+            user=user,
+            noti_type=Notification.NotificationType.GAME_UPLOAD,
+            noti_sub_type=NotificationSubType.REGISTER_REQUEST,
+            related_object=game,
+            game_title=game_title,
+        )
+        logger.info(f"notify_game_register_task: 알림 생성 완료 (user_id={user_id}, game_id={game_id})")
+    except Exception as e:
+        logger.error(f"notify_game_register_task: 알림 생성 실패 (user_id={user_id}, game_id={game_id}): {e}", exc_info=True)
