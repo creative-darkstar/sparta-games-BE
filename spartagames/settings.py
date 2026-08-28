@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
 from celery.schedules import crontab
@@ -156,18 +157,22 @@ DATABASES = {
     }
 }
 
+# 로컬: 기본값 127.0.0.1 (환경변수 설정 불필요)
+# Docker: docker-compose에서 REDIS_HOST=redis 주입
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],  # Redis 서버 주소
-            # "db": 1,  # <-- 1번 데이터베이스 사용
+            "hosts": [(REDIS_HOST, REDIS_PORT)],
         },
     },
 }
 
-# Celery 브로커로 Django 데이터베이스 사용
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
+# Celery 브로커로 Redis 사용
+CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 CELERY_RESULT_BACKEND = 'django-db'
 
 CELERY_ACCEPT_CONTENT = ['json']

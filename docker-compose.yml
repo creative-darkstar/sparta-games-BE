@@ -11,11 +11,44 @@ services:
   spartagames-be:
     build: .
     command: daphne -b 0.0.0.0 -p 8000 spartagames.asgi:application
-    deploy:
-      replicas: 3
+    # deploy:
+    #   replicas: 3
     restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
     depends_on:
       - redis
+    volumes:
+    - ./db.sqlite3:/usr/src/app/db.sqlite3
+    networks:
+      - spartagames-net
+
+  celery-worker:
+    build: .
+    command: celery -A spartagames worker --loglevel=info
+    restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+    volumes:
+      - ./db.sqlite3:/usr/src/app/db.sqlite3
+    networks:
+      - spartagames-net
+
+  celery-beat:
+    build: .
+    command: celery -A spartagames beat --loglevel=info
+    restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+    volumes:
+      - ./db.sqlite3:/usr/src/app/db.sqlite3
     networks:
       - spartagames-net
 
