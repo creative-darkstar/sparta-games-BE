@@ -1,15 +1,11 @@
 from PIL import Image
 import os
 import re
-import requests
 import stat
 import zipfile
 
 from django.db.models import Avg
 from .models import Chip
-
-from spartagames.config import DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
-from spartagames.exceptions import DiscordAlertException
 
 
 # zip bomb 체크용 최대 허용 압축률 (총 압축 해제된 파일들 용량 / 총 압축된 파일들 용량)
@@ -211,25 +207,3 @@ def assign_chip_based_on_difficulty(game):
         game.chip.add(hard_chip)
     else:
         game.chip.add(normal_chip)
-
-
-def send_discord_notification(game, msg_text="📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"):
-    webhook_url = DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
-
-    message = {
-        "content": f"""
-{msg_text}
-🎮 게임명: {game.title}\n"
-👤 업로더: {game.maker.nickname}\n
-"""
-    }
-
-    try:
-        resp = requests.post(webhook_url, json=message)
-        # resp.raise_for_status()
-    except Exception as e:
-        # logger 도입하는대로 해당 코드 라인은 살릴 예정
-        # 지금은 print 처리
-        # raise DiscordAlertException
-        # 실패 시 로깅 처리
-        print(f"Discord 알림 실패: {e}")

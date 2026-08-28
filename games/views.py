@@ -44,14 +44,13 @@ from spartagames.config import AWS_S3_BUCKET_NAME
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
+from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file
+from .tasks import send_discord_notification_task, notify_game_register_task
 from .querysets import (
     with_game_list_optimizations,
     with_game_detail_optimizations,
     with_review_optimizations,
 )
-from commons.models import Notification
-from commons.utils import NotificationSubType, create_notification
 
 logger = logging.getLogger("sparta_games")
 
@@ -268,19 +267,14 @@ class GameListAPIView(APIView):
                 content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
             )
 
-        # 외부 I/O는 트랜잭션 커밋 후 실행 (실패해도 등록은 유지)
-        # 디스코드 알림
-        send_discord_notification(game)
+            game_id = game.pk
+            user_id = request.user.pk
+            game_title = game.title
+            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid))
+            transaction.on_commit(
+                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+            )
 
-        # 페이지 알림
-        notif = create_notification(
-            user=request.user,
-            noti_type=Notification.NotificationType.GAME_UPLOAD,
-            noti_sub_type=NotificationSubType.REGISTER_REQUEST,
-            related_object=game,
-            game_title=game.title
-        )
-        
         return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
@@ -571,6 +565,19 @@ class GameDetailAPIView(APIView):
                     content=log_content,
                 )
 
+            # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
+            if game.register_state == 0:
+                game_id = game.pk
+                user_id = request.user.pk
+                game_title = game.title
+                msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
+                transaction.on_commit(
+                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg)
+                )
+                transaction.on_commit(
+                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                )
+
         # ---------- 외부 I/O (트랜잭션 커밋 후) ----------
         # 교체/삭제된 파일 S3에서 제거 (재시도·배치). 실패해도 DB는 이미 커밋되어 안전
         if s3_keys_to_delete:
@@ -580,18 +587,6 @@ class GameDetailAPIView(APIView):
             except Exception as e:
                 logger.error(f"game {game.pk}: S3 파일 삭제 실패: {e}", exc_info=True)
 
-        # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
-        if game.register_state == 0:
-            send_discord_notification(game, msg_text=f"📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n")
-            
-            notif = create_notification(
-                user=request.user,
-                noti_type=Notification.NotificationType.GAME_UPLOAD,
-                noti_sub_type=NotificationSubType.REGISTER_REQUEST,
-                related_object=game,
-                game_title=game.title
-            )
-        
         return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
