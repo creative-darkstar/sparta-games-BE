@@ -4,6 +4,7 @@ import re
 from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Count
 
 from rest_framework.decorators import api_view
@@ -39,11 +40,13 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
-from spartagames.utils import std_response
+from spartagames.config import AWS_S3_BUCKET_NAME
+from spartagames.utils import std_response, get_s3_client, safe_s3_delete
 from spartagames.pagination import ReviewCustomPagination
 import random
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
+from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key, send_discord_notification
+from .tasks import validate_game_zip_task
 from .querysets import (
     with_game_list_optimizations,
     with_game_detail_optimizations,
@@ -51,6 +54,22 @@ from .querysets import (
 )
 from commons.models import Notification
 from commons.utils import NotificationSubType, create_notification
+
+
+logger = logging.getLogger("sparta_games")
+
+
+def _on_gamefile_committed(old_name, game_id):
+    if old_name:
+        try:
+            s3 = get_s3_client()
+            safe_s3_delete(s3, AWS_S3_BUCKET_NAME, [f"media/{old_name}"])
+        except Exception:
+            logger.error(
+                f"Failed to delete old gamefile media/{old_name} for game {game_id}",
+                exc_info=True,
+            )
+    validate_game_zip_task.delay(game_id)
 
 
 class GameListAPIView(APIView):
@@ -211,12 +230,9 @@ class GameListAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ZIP 파일 검증
-        gamefile = request.FILES.get("gamefile")
-        is_valid, error_msg = validate_zip_file(gamefile)
-        if not is_valid:
+        file_key, error_msg = assert_gamefile_key(request.data.get("gamefile"))
+        if error_msg:
             return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-            #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 카테고리 이름 가져오기
         category_name = request.data.get('category')
@@ -230,38 +246,41 @@ class GameListAPIView(APIView):
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # Game model에 우선 저장
-        game = Game.objects.create(
-            title=request.data.get('title'),
-            thumbnail=thumbnail,
-            youtube_url=request.data.get('youtube_url'),
-            maker=request.user,
-            content=request.data.get('content'),
-            gamefile=gamefile,
-            star=0,
-            review_cnt=0,
-        )
+        with transaction.atomic():
+            game = Game.objects.create(
+                title=request.data.get('title'),
+                thumbnail=thumbnail,
+                youtube_url=request.data.get('youtube_url'),
+                maker=request.user,
+                content=request.data.get('content'),
+                gamefile=file_key,
+                star=0,
+                review_cnt=0,
+            )
 
-        # 카테고리 하나만 설정
-        game.category.set([category])
+            # 카테고리 하나만 설정
+            game.category.set([category])
 
-        new_game_chip, created = Chip.objects.get_or_create(name="New Game")
-        game.chip.add(new_game_chip)
+            new_game_chip, created = Chip.objects.get_or_create(name="New Game")
+            game.chip.add(new_game_chip)
 
-        # 기본 'NORMAL' 칩 추가
-        normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
-        game.chip.add(normal_chip)
+            # 기본 'NORMAL' 칩 추가
+            normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+            game.chip.add(normal_chip)
 
-        # 이후 Screenshot model에 저장
-        for item in screenshots:
-            scrfeenshot=Screenshot.objects.create(src=item, game=game)
+            # 이후 Screenshot model에 저장
+            for item in screenshots:
+                scrfeenshot=Screenshot.objects.create(src=item, game=game)
 
-        # 게임 등록 로그에 데이터 추가
-        game.logs_game.create(
-            recoder = request.user,
-            maker = request.user,
-            game = game,
-            content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
-        )
+            # 게임 등록 로그에 데이터 추가
+            game.logs_game.create(
+                recoder = request.user,
+                maker = request.user,
+                game = game,
+                content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
+            )
+
+            transaction.on_commit(lambda gid=game.id: validate_game_zip_task.delay(gid))
         
         # 디스코드 알림
         send_discord_notification(game)
@@ -460,72 +479,24 @@ class GameDetailAPIView(APIView):
             return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
             #return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
-        # 게임 파일 검증 및 변경 처리
-        gamefile = request.FILES.get("gamefile")
-        if game.register_state == 2:
-            if not gamefile:
-                return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-        if gamefile:
-            is_valid, error_msg = validate_zip_file(gamefile)
-            if not is_valid:
+        raw_gamefile = request.data.get("gamefile")
+        file_key = None
+        if raw_gamefile not in (None, ""):
+            file_key, error_msg = assert_gamefile_key(raw_gamefile)
+            if error_msg:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-                #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-            game.register_state = 0
-            game.gamefile = gamefile
-            changes.append("gamefile")
 
-        # 썸네일 검증 및 변경 처리
+        if game.register_state == 2 and not file_key:
+            return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
+
+        # 썸네일 검증
         thumbnail = request.FILES.get("thumbnail")
         if thumbnail:
             is_valid, error_msg = validate_image(thumbnail)
             if not is_valid:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-            if thumbnail != game.thumbnail:
-                # 기존 파일 s3에서 삭제
-                default_storage.delete(game.thumbnail.name)
-                # request로 받은 파일로 교체
-                game.thumbnail = thumbnail
-                changes.append("thumbnail")
 
-        # 필드 업데이트 (값이 변경되었는지 확인)
-        title = request.data.get("title", game.title)
-        if title != game.title:
-            game.title = title
-            changes.append("title")
-
-        youtube_url = request.data.get("youtube_url", game.youtube_url)
-        if youtube_url != game.youtube_url:
-            game.youtube_url = youtube_url
-            changes.append("youtube_url")
-
-        content = request.data.get("content", game.content)
-        if content != game.content:
-            game.content = content
-            changes.append("content")
-
-        game.save()
-
-        # 카테고리 변경 처리 (1개만 허용)
-        category_name = request.data.get("category")
-        if category_name:
-            try:
-                category = GameCategory.objects.get(name=category_name)
-                if not game.category.filter(pk=category.pk).exists():  # 기존과 다를 경우 변경
-                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
-                    changes.append("category")
-            except GameCategory.DoesNotExist:
-                return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
-                #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
-
-        # 기존 스크린샷 유지 또는 삭제
-        old_screenshots = self.request.data.getlist('old_screenshots', [])
-        old_screenshots = [int(pk) for pk in old_screenshots]
-        for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
-            default_storage.delete(item.src.name)
-            item.delete()
-
-        # 새로운 스크린샷 업로드
         # 스크린샷 검증
         screenshots = self.request.FILES.getlist("new_screenshots")
         for screenshot in screenshots:
@@ -533,22 +504,89 @@ class GameDetailAPIView(APIView):
             if not is_valid:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-        # 데이터 추가
-        for item in screenshots:
-            screenshot = Screenshot.objects.create(src=item, game=game)
 
-        # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
-        if changes:
-            if "gamefile" in changes:
-                log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            else:
-                log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            game.logs_game.create(
-                recoder=request.user,
-                maker=request.user,
-                game=game,
-                content=log_content,
-            )
+        # 카테고리 검증 (save 전에 수행)
+        category_name = request.data.get("category")
+        category = None
+        if category_name:
+            try:
+                category = GameCategory.objects.get(name=category_name)
+            except GameCategory.DoesNotExist:
+                return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
+                #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 새로운 게임 파일 업로드가 된 경우, 기존 게임 파일을 삭제하기 위해 저장
+        old_gamefile_name = game.gamefile.name if file_key else None
+
+        with transaction.atomic():
+            # 게임 파일 변경 처리
+            if file_key:
+                game.register_state = 0
+                game.gamefile = file_key
+                changes.append("gamefile")
+
+            # 썸네일 변경 처리
+            if thumbnail:
+                if thumbnail != game.thumbnail:
+                    # 기존 파일 s3에서 삭제
+                    default_storage.delete(game.thumbnail.name)
+                    # request로 받은 파일로 교체
+                    game.thumbnail = thumbnail
+                    changes.append("thumbnail")
+
+            # 필드 업데이트 (값이 변경되었는지 확인)
+            title = request.data.get("title", game.title)
+            if title != game.title:
+                game.title = title
+                changes.append("title")
+
+            youtube_url = request.data.get("youtube_url", game.youtube_url)
+            if youtube_url != game.youtube_url:
+                game.youtube_url = youtube_url
+                changes.append("youtube_url")
+
+            content = request.data.get("content", game.content)
+            if content != game.content:
+                game.content = content
+                changes.append("content")
+
+            game.save()
+
+            # 카테고리 변경 처리 (1개만 허용)
+            if category is not None:
+                if not game.category.filter(pk=category.pk).exists():  # 기존과 다를 경우 변경
+                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
+                    changes.append("category")
+
+            # 기존 스크린샷 유지 또는 삭제
+            old_screenshots = self.request.data.getlist('old_screenshots', [])
+            old_screenshots = [int(pk) for pk in old_screenshots]
+            for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
+                default_storage.delete(item.src.name)
+                item.delete()
+
+            # 새로운 스크린샷 업로드
+            for item in screenshots:
+                screenshot = Screenshot.objects.create(src=item, game=game)
+
+            # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
+            if changes:
+                if "gamefile" in changes:
+                    log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                else:
+                    log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                game.logs_game.create(
+                    recoder=request.user,
+                    maker=request.user,
+                    game=game,
+                    content=log_content,
+                )
+
+            if file_key:
+                delete_name = old_gamefile_name if old_gamefile_name != file_key else None
+                transaction.on_commit(
+                    lambda name=delete_name, gid=game.id: _on_gamefile_committed(name, gid)
+                )
         
         # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
         if game.register_state == 0:
