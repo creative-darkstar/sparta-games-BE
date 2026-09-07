@@ -43,9 +43,9 @@ from spartagames.utils import std_response, get_s3_client, safe_s3_delete
 from spartagames.config import AWS_S3_BUCKET_NAME
 from spartagames.pagination import ReviewCustomPagination
 import random
+from .tasks import send_discord_notification_task, notify_game_register_task, validate_game_zip_task
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file
-from .tasks import send_discord_notification_task, notify_game_register_task
+from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key
 from .querysets import (
     with_game_list_optimizations,
     with_game_detail_optimizations,
@@ -53,6 +53,19 @@ from .querysets import (
 )
 
 logger = logging.getLogger("sparta_games")
+
+
+def _on_gamefile_committed(old_name, game_id):
+    if old_name:
+        try:
+            s3 = get_s3_client()
+            safe_s3_delete(s3, AWS_S3_BUCKET_NAME, [f"media/{old_name}"])
+        except Exception:
+            logger.error(
+                f"Failed to delete old gamefile media/{old_name} for game {game_id}",
+                exc_info=True,
+            )
+    validate_game_zip_task.delay(game_id)
 
 
 class GameListAPIView(APIView):
@@ -213,12 +226,9 @@ class GameListAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ZIP 파일 검증
-        gamefile = request.FILES.get("gamefile")
-        is_valid, error_msg = validate_zip_file(gamefile)
-        if not is_valid:
+        file_key, error_msg = assert_gamefile_key(request.data.get("gamefile"))
+        if error_msg:
             return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-            #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 카테고리 이름 가져오기
         category_name = request.data.get('category')
@@ -240,7 +250,7 @@ class GameListAPIView(APIView):
                 youtube_url=request.data.get('youtube_url'),
                 maker=request.user,
                 content=request.data.get('content'),
-                gamefile=gamefile,
+                gamefile=file_key,
                 star=0,
                 review_cnt=0,
             )
@@ -274,6 +284,7 @@ class GameListAPIView(APIView):
             transaction.on_commit(
                 lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
             )
+            transaction.on_commit(lambda gid=game.id: validate_game_zip_task.delay(gid))
 
         return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
@@ -465,17 +476,20 @@ class GameDetailAPIView(APIView):
 
         # ---------- 검증 및 in-memory 변경 (트랜잭션 이전) ----------
         # 게임 파일 검증 및 변경 처리
-        gamefile = request.FILES.get("gamefile")
-        if game.register_state == 2:
-            if not gamefile:
-                return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-        if gamefile:
-            is_valid, error_msg = validate_zip_file(gamefile)
-            if not is_valid:
+        raw_gamefile = request.data.get("gamefile")
+        file_key = None
+        if raw_gamefile not in (None, ""):
+            file_key, error_msg = assert_gamefile_key(raw_gamefile)
+            if error_msg:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-                #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        if game.register_state == 2 and not file_key:
+            return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
+
+        old_gamefile_name = game.gamefile.name if file_key else None
+        if file_key:
             game.register_state = 0
-            game.gamefile = gamefile
+            game.gamefile = file_key
             changes.append("gamefile")
 
         # 썸네일 검증 및 변경 처리
@@ -576,6 +590,12 @@ class GameDetailAPIView(APIView):
                 )
                 transaction.on_commit(
                     lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                )
+
+            if file_key:
+                delete_name = old_gamefile_name if old_gamefile_name != file_key else None
+                transaction.on_commit(
+                    lambda name=delete_name, gid=game.id: _on_gamefile_committed(name, gid)
                 )
 
         # ---------- 외부 I/O (트랜잭션 커밋 후) ----------

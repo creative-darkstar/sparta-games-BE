@@ -4,8 +4,13 @@ import re
 import stat
 import zipfile
 
+from botocore.exceptions import ClientError
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Avg
 from .models import Chip
+
+from spartagames.config import AWS_S3_BUCKET_NAME
+from spartagames.utils import get_s3_client
 
 
 # zip bomb 체크용 최대 허용 압축률 (총 압축 해제된 파일들 용량 / 총 압축된 파일들 용량)
@@ -83,6 +88,37 @@ def _is_symlink(info: zipfile.ZipInfo) -> bool:
         return stat.S_ISLNK(mode)
     else:
         return False
+
+
+GAMEFILE_KEY_RE = re.compile(r'^zips/[^/\\]+\.zip$')
+
+
+def assert_gamefile_key(file_key):
+    """
+    클라이언트가 제출한 gamefile 문자열이 우리 버킷의 media/zips/ 객체인지 확인한다.
+    성공 시 (normalized_key, None), 실패 시 (None, error_message).
+    """
+    if isinstance(file_key, UploadedFile) or not isinstance(file_key, str):
+        return None, "gamefile는 파일 키 문자열이어야 합니다."
+
+    file_key = file_key.strip()
+    if not file_key:
+        return None, "gamefile는 필수입니다."
+
+    if '..' in file_key or '\\' in file_key or not GAMEFILE_KEY_RE.fullmatch(file_key):
+        return None, "gamefile 형식이 올바르지 않습니다."
+
+    s3 = get_s3_client()
+    object_key = f"media/{file_key}"
+    try:
+        s3.head_object(Bucket=AWS_S3_BUCKET_NAME, Key=object_key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("404", "403", "NoSuchKey", "NotFound"):
+            return None, "업로드된 게임 파일을 찾을 수 없습니다."
+        return None, "게임 파일을 확인하는 중 오류가 발생했습니다."
+
+    return file_key, None
 
 
 def validate_zip_file(zip_file, max_size=500 * 1024 * 1024):
