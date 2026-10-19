@@ -1,6 +1,7 @@
 import logging
 
 import boto3
+from botocore.config import Config
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from rest_framework import status
@@ -35,6 +36,7 @@ def get_s3_client():
     """S3 클라이언트 생성 (호출부에서 재사용)"""
     return boto3.client(
         "s3",
+        config=Config(signature_version="s3v4"),
         aws_access_key_id=AWS_AUTH["aws_access_key_id"],
         aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
         region_name=AWS_S3_REGION_NAME,

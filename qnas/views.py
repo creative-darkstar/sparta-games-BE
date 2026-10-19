@@ -449,12 +449,17 @@ from .tasks import game_register_task
 
 @api_view(["POST"])
 def game_register_v2(request, game_id):
+    if not request.user.is_authenticated or not request.user.is_staff:
+        return Response({"message": "관리자 권한이 필요합니다."}, status=403)
+    from games.task_tracking import prepare, publish
+    game = get_object_or_404(Game, pk=game_id, is_visible=True, register_state=0)
     created = r.set(f"game:dedup:{game_id}", "1", nx=True, ex=30)
     if not created:
         return Response({
             "message": "same task. will skip: it's dup",
         }, status=status.HTTP_406_NOT_ACCEPTABLE)
-    task = game_register_task.delay(game_id)
+    record = prepare(game, kind="game_publication")
+    publish(record, game_register_task)
     
     # # 게임 등록 로그에 데이터 추가
     # row.logs_game.create(
@@ -466,7 +471,8 @@ def game_register_v2(request, game_id):
     
     return Response({
         "message": "게임 등록을 시작했습니다.",
-        "task_id": task.id,
+        "task_id": record["task_id"],
+        "publish_status": record["publish_status"],
     }, status=status.HTTP_202_ACCEPTED)
 
 
@@ -474,13 +480,34 @@ from celery.result import AsyncResult
 
 @api_view(["GET"])
 def get_task_status(request, task_id):
-    result = AsyncResult(task_id)
-
-    return Response({
-        "task_id": task_id,
-        "status": result.status,  # PENDING, STARTED, SUCCESS, FAILURE
-        "result": result.result if result.successful() else None,
-    })
+    if not request.user.is_authenticated:
+        return Response({"message": "로그인이 필요합니다."}, status=401)
+    from games.task_tracking import lookup
+    try:
+        record = lookup(task_id)
+        if not record:
+            return Response({"lookup_status": "unavailable"}, status=404)
+        game = Game.objects.filter(pk=record["game_id"], is_visible=True).first()
+        is_owner = game and game.maker_id == request.user.pk and record["owner_id"] == request.user.pk
+        if not request.user.is_staff and (record["kind"] != "game_zip_validation" or not is_owner):
+            return Response({"message": "조회 권한이 없습니다."}, status=403)
+        result = AsyncResult(task_id)
+        task_status = result.status
+        lookup_status = "available"
+        if record["publish_status"] != "published":
+            lookup_status = "dispatch_unavailable"
+        elif task_status == "PENDING":
+            import time
+            if time.time() - record["created_at"] > 600:
+                lookup_status = "unconfirmed"
+        return Response({
+            "task_id": task_id, "status": task_status,
+            "result": result.result if task_status == "SUCCESS" else None,
+            "lookup_status": lookup_status,
+            "error_code": "VALIDATION_EXECUTION_FAILED" if task_status == "FAILURE" else None,
+        })
+    except Exception:
+        return Response({"lookup_status": "unavailable"}, status=503)
 
 
 @api_view(['POST'])

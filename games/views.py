@@ -43,6 +43,7 @@ from spartagames.utils import std_response, get_s3_client, safe_s3_delete
 from spartagames.config import AWS_S3_BUCKET_NAME
 from spartagames.pagination import ReviewCustomPagination
 import random
+from .task_tracking import schedule, receipt, claim_file
 from .tasks import send_discord_notification_task, notify_game_register_task, validate_game_zip_task
 from urllib.parse import urlencode
 from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key
@@ -65,7 +66,6 @@ def _on_gamefile_committed(old_name, game_id):
                 f"Failed to delete old gamefile media/{old_name} for game {game_id}",
                 exc_info=True,
             )
-    validate_game_zip_task.delay(game_id)
 
 
 class GameListAPIView(APIView):
@@ -243,6 +243,8 @@ class GameListAPIView(APIView):
 
         # DB 작업(게임 생성 + 카테고리/칩 + 스크린샷 + 로그)을 원자적으로 처리
         with transaction.atomic():
+            if not claim_file(file_key):
+                return std_response(message="이미 접수한 파일입니다. 개발목록을 확인해주세요.", status="fail", status_code=409)
             # Game model에 우선 저장
             game = Game.objects.create(
                 title=request.data.get('title'),
@@ -280,13 +282,13 @@ class GameListAPIView(APIView):
             game_id = game.pk
             user_id = request.user.pk
             game_title = game.title
-            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid))
+            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid), robust=True)
             transaction.on_commit(
-                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title), robust=True
             )
-            transaction.on_commit(lambda gid=game.id: validate_game_zip_task.delay(gid))
+            submission = schedule(game, validate_game_zip_task)
 
-        return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(data=receipt(submission), message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -471,6 +473,8 @@ class GameDetailAPIView(APIView):
             return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
             #return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
+        original_file = game.gamefile.name
+
         # 커밋 후 삭제할 S3 키 (교체된 썸네일 / 제거된 스크린샷)
         s3_keys_to_delete = []
 
@@ -551,6 +555,13 @@ class GameDetailAPIView(APIView):
 
         # ---------- DB 작업 (원자적으로 처리) ----------
         with transaction.atomic():
+            current = Game.objects.select_for_update().get(pk=game.pk)
+            if current.gamefile.name != original_file:
+                return std_response(message="파일이 변경되었습니다. 최신 내용을 다시 조회해주세요.", status="fail", status_code=409)
+            if not file_key:
+                game.register_state = current.register_state
+            if file_key and not claim_file(file_key):
+                return std_response(message="이미 접수한 파일입니다. 개발목록을 확인해주세요.", status="fail", status_code=409)
             game.save()
 
             # 카테고리 변경 처리 (1개만 허용)
@@ -580,19 +591,20 @@ class GameDetailAPIView(APIView):
                 )
 
             # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
-            if game.register_state == 0:
+            if file_key and game.register_state == 0:
                 game_id = game.pk
                 user_id = request.user.pk
                 game_title = game.title
                 msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
                 transaction.on_commit(
-                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg)
+                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg), robust=True
                 )
                 transaction.on_commit(
-                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title), robust=True
                 )
 
             if file_key:
+                submission = schedule(game, validate_game_zip_task)
                 delete_name = old_gamefile_name if old_gamefile_name != file_key else None
                 transaction.on_commit(
                     lambda name=delete_name, gid=game.id: _on_gamefile_committed(name, gid)
@@ -607,7 +619,7 @@ class GameDetailAPIView(APIView):
             except Exception as e:
                 logger.error(f"game {game.pk}: S3 파일 삭제 실패: {e}", exc_info=True)
 
-        return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(data=receipt(submission) if file_key else {"game_id": game.pk}, message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """

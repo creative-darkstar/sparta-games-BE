@@ -174,6 +174,8 @@ CHANNEL_LAYERS = {
 # Celery 브로커로 Redis 사용
 CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 CELERY_RESULT_BACKEND = 'django-db'
+# F01: align existing result cleanup with submission index retention.
+CELERY_RESULT_EXPIRES = 7 * 24 * 60 * 60
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
