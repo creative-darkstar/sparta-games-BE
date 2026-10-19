@@ -231,80 +231,77 @@ def notify_game_register_task(user_id, game_id, game_title):
         logger.error(f"notify_game_register_task: 알림 생성 실패 (user_id={user_id}, game_id={game_id}): {e}", exc_info=True)
 
 
-def _reject_invalid_zip(game, error_msg):
-    game.register_state = 2
-    game.save(update_fields=["register_state"])
-    try:
-        game.logs_game.create(
-            recoder=game.maker,
-            maker=game.maker,
-            game=game,
-            content=f"zip 검증 실패: {error_msg}",
-        )
-    except Exception:
-        logger.error(f"Failed to write zip reject log for game {game.id}", exc_info=True)
-    try:
-        create_notification(
-            user=game.maker,
-            noti_type=Notification.NotificationType.GAME_UPLOAD,
-            noti_sub_type=NotificationSubType.REGISTER_REJECT,
-            related_object=game,
-            game_title=game.title,
-        )
-    except Exception:
-        logger.error(f"Failed to notify zip reject for game {game.id}", exc_info=True)
+def _notify_zip_rejection(game_id, file_key):
+    from django.db import transaction
+    with transaction.atomic():
+        game = Game.objects.select_for_update().filter(pk=game_id, gamefile=file_key, register_state=2, is_visible=True).first()
+        if game:
+            create_notification(user=game.maker, noti_type=Notification.NotificationType.GAME_UPLOAD,
+                                noti_sub_type=NotificationSubType.REGISTER_REJECT,
+                                related_object=game, game_title=game.title)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=10)
-def validate_game_zip_task(self, game_id):
-    """
-    S3에 올라간 게임 zip을 다운로드해 검증한다.
-    성공 시 is_used=true 태깅, 실패 시 register_state=2 (게시되지 않음).
-    """
+def validate_game_zip_task(self, game_id, file_key=None, submission_id=None):
+    from django.db import transaction
+
+    def outcome(value, reason=None, code=None):
+        return dict(kind="game_zip_validation", schema_version=1, game_id=game_id,
+                    submission_id=submission_id, outcome=value, reason_code=code, reason=reason)
+
+    # Legacy queued arguments cannot identify which submission they belong to.
+    if not file_key or not submission_id:
+        return outcome("skipped", "제출 식별자가 없는 이전 작업입니다.", "LEGACY_TASK")
     tmp_path = None
     try:
-        try:
-            game = Game.objects.get(pk=game_id, register_state=0, is_visible=True)
-        except Game.DoesNotExist:
-            logger.info(f"validate_game_zip_task: game {game_id} not found or not pending")
-            return
-
+        game = Game.objects.filter(pk=game_id, is_visible=True, gamefile=file_key).first()
+        if not game:
+            return outcome("skipped")
         s3 = get_s3_client()
-        object_key = f"media/{game.gamefile.name}"
-
+        object_key = f"media/{file_key}"
         try:
             zip_resp = s3.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=object_key)
-        except ClientError as e:
-            code = e.response.get("Error", {}).get("Code", "")
-            if code in ("404", "403", "NoSuchKey", "NotFound"):
-                _reject_invalid_zip(game, "업로드된 게임 파일을 찾을 수 없습니다.")
-                return
-            raise
-
-        with NamedTemporaryFile(suffix=".zip", delete=False) as tmp_file:
-            for chunk in zip_resp["Body"].iter_chunks(chunk_size=8192):
-                tmp_file.write(chunk)
-            tmp_path = tmp_file.name
-
-        with open(tmp_path, "rb") as zip_fp:
-            zip_fp.size = os.path.getsize(tmp_path)
-            is_valid, error_msg = validate_zip_file(zip_fp)
-
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                is_valid, error_msg = False, "업로드된 게임 파일을 찾을 수 없습니다."
+            else:
+                raise
+        else:
+            with NamedTemporaryFile(suffix=".zip", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+                try:
+                    for chunk in zip_resp["Body"].iter_chunks(chunk_size=8192):
+                        tmp_file.write(chunk)
+                finally:
+                    zip_resp["Body"].close()
+            with open(tmp_path, "rb") as zip_fp:
+                zip_fp.size = os.path.getsize(tmp_path)
+                is_valid, error_msg = validate_zip_file(zip_fp)
         if is_valid:
+            # Tag failure must propagate into retry/FAILURE, never SUCCESS/valid.
             safe_s3_tag(s3, AWS_S3_BUCKET_NAME, object_key, {"is_used": "true"})
-            return
-
-        _reject_invalid_zip(game, error_msg)
-    except Exception as e:
-        logger.error(f"Error in validate_game_zip_task for game {game_id}: {e}", exc_info=True)
-        try:
-            raise self.retry(exc=e)
-        except self.MaxRetriesExceededError:
-            logger.error(f"validate_game_zip_task retries exhausted for game {game_id}")
-            return
+        with transaction.atomic():
+            game = Game.objects.select_for_update().filter(pk=game_id, is_visible=True).first()
+            if not game or game.gamefile.name != file_key:
+                return outcome("skipped")
+            if is_valid:
+                return outcome("valid")
+            if game.register_state == 1:
+                return outcome("skipped")
+            marker = f"zip 검증 실패 [{submission_id}]: {error_msg}"
+            if not game.logs_game.filter(content=marker).exists():
+                game.register_state = 2
+                game.save(update_fields=["register_state"])
+                game.logs_game.create(recoder=game.maker, maker=game.maker, game=game, content=marker)
+                transaction.on_commit(lambda: _notify_zip_rejection(game_id, file_key), robust=True)
+            code = "SYMLINK_NOT_ALLOWED" if "심볼릭" in (error_msg or "") else "INVALID_ZIP"
+            return outcome("invalid", error_msg, code)
+    except Exception as exc:
+        logger.exception("ZIP validation execution failed: game %s", game_id)
+        raise self.retry(exc=exc)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:
                 os.remove(tmp_path)
             except OSError:
-                logger.warning(f"Failed to remove temp zip {tmp_path}")
+                logger.warning("Temporary ZIP cleanup failed")
