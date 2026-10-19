@@ -93,7 +93,7 @@ def _is_symlink(info: zipfile.ZipInfo) -> bool:
 GAMEFILE_KEY_RE = re.compile(r'^zips/[^/\\]+\.zip$')
 
 
-def assert_gamefile_key(file_key):
+def assert_gamefile_key(file_key, owner_id=None):
     """
     클라이언트가 제출한 gamefile 문자열이 우리 버킷의 media/zips/ 객체인지 확인한다.
     성공 시 (normalized_key, None), 실패 시 (None, error_message).
@@ -107,6 +107,10 @@ def assert_gamefile_key(file_key):
 
     if '..' in file_key or '\\' in file_key or not GAMEFILE_KEY_RE.fullmatch(file_key):
         return None, "gamefile 형식이 올바르지 않습니다."
+
+    from .task_tracking import owns_upload
+    if not owns_upload(file_key, owner_id):
+        return None, "업로드 접수 기한이 만료되었거나 본인의 업로드가 아닙니다. 파일을 다시 선택해주세요."
 
     s3 = get_s3_client()
     object_key = f"media/{file_key}"

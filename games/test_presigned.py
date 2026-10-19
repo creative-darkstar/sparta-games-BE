@@ -146,6 +146,22 @@ class ZipContractTests(TestCase):
         self.game.refresh_from_db()
         self.assertEqual(self.game.gamefile.name, "zips/two.zip")
 
+    @patch("games.views._on_gamefile_committed")
+    @patch("games.views.notify_game_register_task.delay")
+    @patch("games.views.send_discord_notification_task.delay", side_effect=RuntimeError("notification unavailable"))
+    @patch("games.task_tracking.connection")
+    @patch("games.views.validate_game_zip_task.apply_async")
+    @patch("games.views.claim_file", return_value=True)
+    @patch("games.views.assert_gamefile_key", return_value=("zips/two.zip", None))
+    def test_notification_failure_does_not_block_dispatch(self, key, claim, dispatch, connection, discord, notification, cleanup):
+        from games.views import GameDetailAPIView
+        request = APIRequestFactory().put("/game", {"gamefile": "zips/two.zip"}, format="multipart")
+        force_authenticate(request, user=self.owner)
+        with self.captureOnCommitCallbacks(execute=True):
+            response = GameDetailAPIView.as_view()(request, game_id=self.game.pk)
+        data = response.data["data"]
+        dispatch.assert_called_once_with(args=[self.game.pk, "zips/two.zip", data["submission_id"]], task_id=data["task_id"])
+
     def test_empty_owner_list_is_200_and_public_hides_pending(self):
         from users.views import my_games
         for user, target in [(self.other, self.other), (self.other, self.owner)]:
@@ -167,6 +183,17 @@ class ZipContractTests(TestCase):
 
 
 class PresignTests(SimpleTestCase):
+    @patch("games.task_tracking.connection")
+    def test_upload_lease_expires_and_checks_owner(self, client):
+        from games.task_tracking import owns_upload, remember_upload
+        remember_upload("zips/test.zip", 7)
+        self.assertEqual(client.return_value.set.call_args.kwargs["ex"], 1800)
+        client.return_value.get.return_value = b"7"
+        self.assertTrue(owns_upload("zips/test.zip", 7))
+        self.assertFalse(owns_upload("zips/test.zip", 8))
+        client.return_value.get.return_value = None
+        self.assertFalse(owns_upload("zips/test.zip", 7))
+
     def test_if_none_match_is_signed_with_installed_botocore(self):
         import boto3
         from botocore.config import Config

@@ -15,3 +15,15 @@
 - `spartagames/settings.py` 코드 라인: 177 (해당 커밋 기준)
 - `spartagames/test_settings.py` 코드 라인: 1 (해당 커밋 기준)
 - `games/test_presigned.py` 코드 라인: 1 (해당 커밋 기준)
+
+업로드 발급자와 30분 접수 기한을 확인해 만료 키 재사용 방지. 알림 콜백 실패 후에도 같은 task_id로 검증을 발행하는 회귀 검사 추가.
+
+- `commons/views.py` 코드 라인: 141
+
+- `games/task_tracking.py` 코드 라인: 96
+
+- `games/utils.py` 코드 라인: 96, 111
+
+- `games/views.py` 코드 라인: 229, 486
+
+- `games/test_presigned.py` 코드 라인: 149, 186
