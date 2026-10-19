@@ -1,0 +1,3 @@
+C:\Users\user\Desktop\Sparta_Games_BE\sparta-games-BE\games\views.py:1309: SyntaxWarning: invalid escape sequence '\?'
+  '[-=+,#/\?:^.@*\"��~��!����|\(\)\[\]`\'����\��\��\����]', '', about_category)
+No changes detected
