@@ -288,7 +288,7 @@ class GameListAPIView(APIView):
             )
             submission = schedule(game, validate_game_zip_task)
 
-        return std_response(data=receipt(submission), message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(data=receipt(submission), message="검수 요청이 접수되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -619,7 +619,7 @@ class GameDetailAPIView(APIView):
             except Exception as e:
                 logger.error(f"game {game.pk}: S3 파일 삭제 실패: {e}", exc_info=True)
 
-        return std_response(data=receipt(submission) if file_key else {"game_id": game.pk}, message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(data=receipt(submission) if file_key else {"game_id": game.pk}, message="검수 요청이 접수되었습니다." if file_key else "변경사항이 저장되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """
