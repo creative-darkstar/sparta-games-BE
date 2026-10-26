@@ -93,17 +93,3 @@ def claim_file(name):
     if Game.objects.filter(gamefile=name).exists():
         return False
     return bool(connection().set("submission:claimed:" + hashlib.sha256(name.encode()).hexdigest(), "1", nx=True, ex=TTL))
-
-
-def upload_key(name):
-    return "submission:upload:" + hashlib.sha256(name.encode()).hexdigest()
-
-
-def remember_upload(name, owner_id):
-    # An expired presign cannot be recycled as a later submission, even if S3 deletion failed.
-    connection().set(upload_key(name), str(owner_id), ex=1800)
-
-
-def owns_upload(name, owner_id):
-    value = connection().get(upload_key(name))
-    return value is not None and value.decode() == str(owner_id)

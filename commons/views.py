@@ -138,8 +138,6 @@ class S3UploadPresignedUrlView(APIView):
 
         if len(res) == 4:
             presigned_url, real_url, object_key, file_key = res
-            from games.task_tracking import remember_upload
-            remember_upload(file_key, request.user.pk)
             return std_response(
                 status="success",
                 data={

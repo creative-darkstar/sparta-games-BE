@@ -226,7 +226,7 @@ class GameListAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        file_key, error_msg = assert_gamefile_key(request.data.get("gamefile"), request.user.pk)
+        file_key, error_msg = assert_gamefile_key(request.data.get("gamefile"))
         if error_msg:
             return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
 
@@ -483,7 +483,7 @@ class GameDetailAPIView(APIView):
         raw_gamefile = request.data.get("gamefile")
         file_key = None
         if raw_gamefile not in (None, ""):
-            file_key, error_msg = assert_gamefile_key(raw_gamefile, request.user.pk)
+            file_key, error_msg = assert_gamefile_key(raw_gamefile)
             if error_msg:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
 
