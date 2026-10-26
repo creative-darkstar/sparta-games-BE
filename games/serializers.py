@@ -63,18 +63,7 @@ class GameCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ('maker', 'is_visible', 'view_cnt', 'register_state',)
 
 
-class SubmissionMixin(serializers.Serializer):
-    zip_validation = serializers.SerializerMethodField()
-
-    def get_zip_validation(self, obj):
-        user = self.context.get("request_user") or self.context.get("user")
-        if not user or not user.is_authenticated or not (user.pk == obj.maker_id or user.is_staff):
-            return None
-        from .task_tracking import current_submission
-        return current_submission(obj)
-
-
-class GameDetailSerializer(SubmissionMixin, serializers.ModelSerializer):
+class GameDetailSerializer(serializers.ModelSerializer):
     maker_data = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     chips= serializers.SerializerMethodField()
@@ -84,7 +73,7 @@ class GameDetailSerializer(SubmissionMixin, serializers.ModelSerializer):
         model = Game
         fields = ("id", "maker_data", "title", "thumbnail",
                   "star", "content", "chips", "is_liked", "youtube_url",
-                  "zip_validation", "gamefile", "gamepath", "register_state", "is_visible", "review_cnt")
+                  "gamefile", "gamepath", "register_state", "is_visible", "review_cnt")
         read_only_fields = ('maker',)
     
     def get_maker_data(self, obj):

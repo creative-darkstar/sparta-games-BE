@@ -99,14 +99,9 @@ def generate_presigned_url_for_upload(base_path, extension, filename=None):
     # 순환 import 방지: 발급 시점에만 Game.upload_to_func 사용
     from games.models import Game
 
-    file_key = f"zips/{uuid.uuid4()}_{sanitized_filename}"
+    file_key = Game.upload_to_func(None, sanitized_filename)
     object_key = "media/" + file_key
     s3 = get_s3_client()
-
-    # botocore 1.34 lacks the IfNoneMatch model member; sign the header directly.
-    def require_new_object(request, **kwargs):
-        request.headers["If-None-Match"] = "*"
-    s3.meta.events.register("before-sign.s3.PutObject", require_new_object)
 
     presigned_url = s3.generate_presigned_url(
         ClientMethod='put_object',

@@ -461,7 +461,7 @@ def my_games(request, user_id):
     paginated_data = paginator.paginate_queryset(my_games, request)
     
     # 시리얼라이저 적용
-    serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user, 'request_user': request.user})
+    serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user})
     data = paginator.get_paginated_response(serializer.data).data
     
     # 리턴
