@@ -14,6 +14,3 @@ Celery 실행 상태와 valid/invalid/skipped 반환값 분리. 행 잠금, 제�
 
 ## F01 추가 검증
 업로드 발급자와 30분 접수 기한을 확인해 만료 키 재사용 방지. 알림 콜백 실패 후에도 같은 task_id로 검증을 발행하는 회귀 검사 추가.
-
-## 최종 검증
-FE 63개 / BE 16개 테스트 통과. FE build 통과, DB schema 변경 없음. FE 전체 typecheck는 미변경 파일의 기존 오류로 실패. 실 S3·worker 인수 시험은 미실행. 최종 코드 라인 설명과 배포 조건은 docs/presigned-fix/README.md 참조.
