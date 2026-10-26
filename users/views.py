@@ -449,6 +449,14 @@ def my_games(request, user_id):
             status_code=status.HTTP_404_NOT_FOUND
         )
     my_games = user.games.filter(is_visible=True).order_by('-created_at')
+    if not my_games.exists():
+        return std_response(
+            message=f"{request.user}가 제작한 게임이 없습니다.",
+            status="fail",
+            error_code="SERVER_FAIL",
+            status_code=status.HTTP_404_NOT_FOUND
+        )
+
     # 대상 일치 여부 확인
     if user != request.user:
         my_games = my_games.filter(register_state=1)
