@@ -231,9 +231,35 @@ def notify_game_register_task(user_id, game_id, game_title):
         logger.error(f"notify_game_register_task: 알림 생성 실패 (user_id={user_id}, game_id={game_id}): {e}", exc_info=True)
 
 
-def _reject_invalid_zip(game, error_msg):
-    game.register_state = 2
-    game.save(update_fields=["register_state"])
+ZIP_RESULT_KIND = "game_zip_validation"
+ZIP_RESULT_SCHEMA_VERSION = 1
+
+
+def _zip_result(game_id, file_key, outcome, reason_code=None, reason=None):
+    """validate_game_zip_task 반환값. Celery 상태(SUCCESS)와 별개로 파일 판정을 담는다."""
+    return {
+        "kind": ZIP_RESULT_KIND,
+        "schema_version": ZIP_RESULT_SCHEMA_VERSION,
+        "game_id": game_id,
+        "file_key": file_key,
+        "outcome": outcome,  # valid / invalid / skipped
+        "reason_code": reason_code,
+        "reason": reason,
+    }
+
+
+def _reject_invalid_zip(game_id, file_key, error_msg):
+    """
+    현재 파일이 file_key이고 검수 대기(0)일 때만 반려(2)한다.
+    갱신된 행이 없으면(재실행, 파일 교체) 로그·알림을 만들지 않는다.
+    """
+    updated = Game.objects.filter(
+        pk=game_id, gamefile=file_key, register_state=0, is_visible=True
+    ).update(register_state=2)
+    if not updated:
+        return False
+
+    game = Game.objects.select_related("maker").get(pk=game_id)
     try:
         game.logs_game.create(
             recoder=game.maker,
@@ -253,32 +279,46 @@ def _reject_invalid_zip(game, error_msg):
         )
     except Exception:
         logger.error(f"Failed to notify zip reject for game {game.id}", exc_info=True)
+    return True
+
+
+def _is_current_pending_file(game_id, file_key):
+    return Game.objects.filter(
+        pk=game_id, gamefile=file_key, register_state=0, is_visible=True
+    ).exists()
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=10)
-def validate_game_zip_task(self, game_id):
+def validate_game_zip_task(self, game_id, file_key=None):
     """
-    S3에 올라간 게임 zip을 다운로드해 검증한다.
-    성공 시 is_used=true 태깅, 실패 시 register_state=2 (게시되지 않음).
+    S3에 올라간 게임 zip(file_key)을 다운로드해 검증하고 판정 dict를 반환한다.
+    valid: is_used=true 태깅, invalid: register_state=2 (반려),
+    skipped: 게임이 없거나 파일이 교체되어 결과를 적용하지 않음.
+    검증을 실행하지 못한 채 재시도를 소진하면 예외를 그대로 올려 FAILURE로 남긴다.
     """
+    if file_key is None:
+        # 배포 전 큐에 남은 구형 인자 작업. 운영자가 현재 파일로 재발행한다.
+        logger.warning(f"validate_game_zip_task: legacy args for game {game_id}, skipped")
+        return _zip_result(game_id, None, "skipped", "LEGACY_ARGS")
+
+    if not _is_current_pending_file(game_id, file_key):
+        logger.info(f"validate_game_zip_task: game {game_id} not pending or file replaced")
+        return _zip_result(game_id, file_key, "skipped", "FILE_REPLACED")
+
     tmp_path = None
     try:
-        try:
-            game = Game.objects.get(pk=game_id, register_state=0, is_visible=True)
-        except Game.DoesNotExist:
-            logger.info(f"validate_game_zip_task: game {game_id} not found or not pending")
-            return
-
         s3 = get_s3_client()
-        object_key = f"media/{game.gamefile.name}"
+        object_key = f"media/{file_key}"
 
         try:
             zip_resp = s3.get_object(Bucket=AWS_S3_BUCKET_NAME, Key=object_key)
         except ClientError as e:
             code = e.response.get("Error", {}).get("Code", "")
             if code in ("404", "403", "NoSuchKey", "NotFound"):
-                _reject_invalid_zip(game, "업로드된 게임 파일을 찾을 수 없습니다.")
-                return
+                error_msg = "업로드된 게임 파일을 찾을 수 없습니다."
+                if not _reject_invalid_zip(game_id, file_key, error_msg):
+                    return _zip_result(game_id, file_key, "skipped", "FILE_REPLACED")
+                return _zip_result(game_id, file_key, "invalid", "FILE_NOT_FOUND", error_msg)
             raise
 
         with NamedTemporaryFile(suffix=".zip", delete=False) as tmp_file:
@@ -290,18 +330,24 @@ def validate_game_zip_task(self, game_id):
             zip_fp.size = os.path.getsize(tmp_path)
             is_valid, error_msg = validate_zip_file(zip_fp)
 
-        if is_valid:
-            safe_s3_tag(s3, AWS_S3_BUCKET_NAME, object_key, {"is_used": "true"})
-            return
+        # 검사 중 파일이 교체되었으면 결과를 적용하지 않는다.
+        if not _is_current_pending_file(game_id, file_key):
+            return _zip_result(game_id, file_key, "skipped", "FILE_REPLACED")
 
-        _reject_invalid_zip(game, error_msg)
+        if is_valid:
+            # 태깅 실패 시 예외 → 재시도. 보존 태그 없이 valid를 반환하지 않는다.
+            safe_s3_tag(s3, AWS_S3_BUCKET_NAME, object_key, {"is_used": "true"})
+            return _zip_result(game_id, file_key, "valid")
+
+        if not _reject_invalid_zip(game_id, file_key, error_msg):
+            return _zip_result(game_id, file_key, "skipped", "FILE_REPLACED")
+        return _zip_result(game_id, file_key, "invalid", "INVALID_ZIP", error_msg)
     except Exception as e:
         logger.error(f"Error in validate_game_zip_task for game {game_id}: {e}", exc_info=True)
-        try:
-            raise self.retry(exc=e)
-        except self.MaxRetriesExceededError:
+        if self.request.retries >= self.max_retries:
             logger.error(f"validate_game_zip_task retries exhausted for game {game_id}")
-            return
+            raise  # FAILURE로 기록
+        raise self.retry(exc=e)
     finally:
         if tmp_path and os.path.exists(tmp_path):
             try:

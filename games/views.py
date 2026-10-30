@@ -55,7 +55,7 @@ from .querysets import (
 logger = logging.getLogger("sparta_games")
 
 
-def _on_gamefile_committed(old_name, game_id):
+def _on_gamefile_committed(old_name, game_id, file_key):
     if old_name:
         try:
             s3 = get_s3_client()
@@ -65,7 +65,7 @@ def _on_gamefile_committed(old_name, game_id):
                 f"Failed to delete old gamefile media/{old_name} for game {game_id}",
                 exc_info=True,
             )
-    validate_game_zip_task.delay(game_id)
+    validate_game_zip_task.delay(game_id, file_key)
 
 
 class GameListAPIView(APIView):
@@ -284,7 +284,7 @@ class GameListAPIView(APIView):
             transaction.on_commit(
                 lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
             )
-            transaction.on_commit(lambda gid=game.id: validate_game_zip_task.delay(gid))
+            transaction.on_commit(lambda gid=game.id, key=file_key: validate_game_zip_task.delay(gid, key))
 
         return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
@@ -595,7 +595,7 @@ class GameDetailAPIView(APIView):
             if file_key:
                 delete_name = old_gamefile_name if old_gamefile_name != file_key else None
                 transaction.on_commit(
-                    lambda name=delete_name, gid=game.id: _on_gamefile_committed(name, gid)
+                    lambda name=delete_name, gid=game.id, key=file_key: _on_gamefile_committed(name, gid, key)
                 )
 
         # ---------- 외부 I/O (트랜잭션 커밋 후) ----------
