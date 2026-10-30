@@ -129,3 +129,117 @@ class ValidateGameZipTaskTests(TestCase):
         get_s3.return_value = fake_s3()
         result = self.run_task(self.game.id, FILE_KEY)
         self.assertEqual(result.state, "FAILURE")
+
+
+from datetime import datetime, timedelta, timezone as dt_timezone
+
+from django.conf import settings
+from django.test import override_settings
+from rest_framework.test import APIClient
+
+from .utils import is_zip_result_expired, zip_validation_task_id
+
+# RequestContextMiddleware는 async __call__이라 동기 테스트 클라이언트에서 제외한다.
+SYNC_MIDDLEWARE = [m for m in settings.MIDDLEWARE if not m.endswith("RequestContextMiddleware")]
+
+
+def recent_key(name="game"):
+    stamp = datetime.now(dt_timezone.utc).strftime("%Y%m%d%H%M%S%f")
+    return f"zips/{stamp}_{name}.zip"
+
+
+class ZipTaskIdTests(TestCase):
+    """F01: 결정적 task_id와 보관기간 판정"""
+
+    def test_deterministic_and_distinct(self):
+        self.assertEqual(zip_validation_task_id(1, FILE_KEY), zip_validation_task_id(1, FILE_KEY))
+        self.assertNotEqual(zip_validation_task_id(1, FILE_KEY), zip_validation_task_id(2, FILE_KEY))
+        self.assertNotEqual(zip_validation_task_id(1, FILE_KEY), zip_validation_task_id(1, recent_key()))
+
+    def test_expiry_from_key_timestamp(self):
+        self.assertFalse(is_zip_result_expired(recent_key()))
+        old = (datetime.now(dt_timezone.utc) - timedelta(days=8)).strftime("%Y%m%d%H%M%S%f")
+        self.assertTrue(is_zip_result_expired(f"zips/{old}_game.zip"))
+        self.assertFalse(is_zip_result_expired("zips/legacy.zip"))
+
+
+@override_settings(MIDDLEWARE=SYNC_MIDDLEWARE)
+class TaskStatusApiTests(TestCase):
+    """F01: 기존 get_task_status의 game_id 기반 권한·현재 파일 확인"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.maker = make_user()
+        self.other = make_user("other@example.com", "other")
+        self.admin = make_user("admin@example.com", "admin", is_staff=True)
+        self.key = recent_key()
+        self.game = make_game(self.maker, gamefile=self.key)
+        self.task_id = zip_validation_task_id(self.game.id, self.key)
+
+    def url(self, task_id=None, game_id=None):
+        url = f"/directs/api/list/task-status/{task_id or self.task_id}/"
+        return url if game_id is None else f"{url}?game_id={game_id}"
+
+    def get(self, user, url):
+        self.client.force_authenticate(user)
+        return self.client.get(url)
+
+    def test_anonymous_401(self):
+        self.assertEqual(self.client.get(self.url(game_id=self.game.id)).status_code, 401)
+
+    def test_other_user_403(self):
+        self.assertEqual(self.get(self.other, self.url(game_id=self.game.id)).status_code, 403)
+
+    def test_maker_and_admin_ok(self):
+        for user in (self.maker, self.admin):
+            res = self.get(user, self.url(game_id=self.game.id))
+            self.assertEqual(res.status_code, 200)
+            body = res.json()["data"]
+            self.assertEqual(body["task_id"], self.task_id)
+            self.assertEqual(body["status"], "PENDING")
+            self.assertEqual(body["lookup_status"], "ok")
+
+    def test_stale_task_id_409(self):
+        old_id = zip_validation_task_id(self.game.id, "zips/20261030110000000000_old.zip")
+        self.assertEqual(self.get(self.maker, self.url(old_id, self.game.id)).status_code, 409)
+
+    def test_missing_game_404(self):
+        self.assertEqual(self.get(self.maker, self.url(game_id=999999)).status_code, 404)
+
+    def test_without_game_id_admin_only(self):
+        self.assertEqual(self.get(self.maker, self.url()).status_code, 403)
+        self.assertEqual(self.get(self.admin, self.url()).status_code, 200)
+
+    def test_expired_pending(self):
+        old = (datetime.now(dt_timezone.utc) - timedelta(days=8)).strftime("%Y%m%d%H%M%S%f")
+        key = f"zips/{old}_game.zip"
+        Game.objects.filter(pk=self.game.id).update(gamefile=key)
+        res = self.get(self.maker, self.url(zip_validation_task_id(self.game.id, key), self.game.id))
+        self.assertEqual(res.json()["data"]["lookup_status"], "expired")
+
+
+@override_settings(MIDDLEWARE=SYNC_MIDDLEWARE)
+class ZipTaskIdExposureTests(TestCase):
+    """F01: 목록·상세의 zip_task_id는 제작자·관리자에게만"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.maker = make_user()
+        self.other = make_user("other@example.com", "other")
+        self.game = make_game(self.maker, register_state=1)
+
+    def detail(self, user):
+        self.client.force_authenticate(user)
+        return self.client.get(f"/games/api/list/{self.game.id}/").json()["data"]
+
+    def my_games(self, user):
+        self.client.force_authenticate(user)
+        return self.client.get(f"/users/api/{self.maker.id}/games/").json()["data"]
+
+    def test_detail(self):
+        self.assertEqual(self.detail(self.maker)["zip_task_id"], zip_validation_task_id(self.game.id, FILE_KEY))
+        self.assertIsNone(self.detail(self.other)["zip_task_id"])
+
+    def test_my_games(self):
+        self.assertEqual(self.my_games(self.maker)[0]["zip_task_id"], zip_validation_task_id(self.game.id, FILE_KEY))
+        self.assertIsNone(self.my_games(self.other)[0]["zip_task_id"])

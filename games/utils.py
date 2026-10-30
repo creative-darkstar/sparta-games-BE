@@ -1,7 +1,9 @@
+from datetime import datetime, timedelta, timezone as dt_timezone
 from PIL import Image
 import os
 import re
 import stat
+import uuid
 import zipfile
 
 from botocore.exceptions import ClientError
@@ -91,6 +93,39 @@ def _is_symlink(info: zipfile.ZipInfo) -> bool:
 
 
 GAMEFILE_KEY_RE = re.compile(r'^zips/[^/\\]+\.zip$')
+
+
+# ZIP 검증 task_id 계산용 네임스페이스. 값을 바꾸면 기존 task_id를 다시 계산할 수 없으므로 고정한다.
+ZIP_TASK_NAMESPACE = uuid.UUID("ded0a6c0-0c7a-4345-99aa-a43e1743df2f")
+
+# ZIP 검증 결과 조회 보장 기간 (settings.CELERY_RESULT_EXPIRES와 같은 값)
+ZIP_RESULT_RETENTION = timedelta(days=7)
+
+GAMEFILE_KEY_TIME_RE = re.compile(r'^zips/(\d{20})_')
+
+
+def zip_validation_task_id(game_id, file_key):
+    """
+    게임 ID + 파일 키로 ZIP 검증 task_id를 계산한다.
+    별도 저장 없이 현재 DB의 game.gamefile.name만으로 같은 ID를 다시 얻을 수 있다.
+    """
+    return str(uuid.uuid5(ZIP_TASK_NAMESPACE, f"game_zip:{game_id}:{file_key}"))
+
+
+def zip_submitted_at(file_key):
+    """파일 키에 들어 있는 presign 발급 시각(UTC). 형식이 다르면 None."""
+    match = GAMEFILE_KEY_TIME_RE.match(file_key or "")
+    if not match:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%d%H%M%S%f").replace(tzinfo=dt_timezone.utc)
+
+
+def is_zip_result_expired(file_key, now=None):
+    submitted_at = zip_submitted_at(file_key)
+    if submitted_at is None:
+        return False
+    now = now or datetime.now(dt_timezone.utc)
+    return now - submitted_at > ZIP_RESULT_RETENTION
 
 
 def assert_gamefile_key(file_key):

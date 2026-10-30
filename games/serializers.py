@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Game, Review, GameCategory, Screenshot
+from .utils import zip_validation_task_id
 
 DIFFICULTY_CHIPS = ["EASY", "NORMAL", "HARD"]
 PRIORITY_CHIPS = ["Daily Top", "New Game", "Bookmark Top", "Long Play", "Review Top"]
@@ -63,8 +64,20 @@ class GameCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ('maker', 'is_visible', 'view_cnt', 'register_state',)
 
 
+def get_zip_task_id_for(obj, viewer):
+    """제작자·관리자에게만 현재 파일의 ZIP 검증 task_id를 제공한다."""
+    if viewer is None or not getattr(viewer, "is_authenticated", False):
+        return None
+    if obj.maker_id != viewer.id and not viewer.is_staff:
+        return None
+    if not obj.gamefile:
+        return None
+    return zip_validation_task_id(obj.id, obj.gamefile.name)
+
+
 class GameDetailSerializer(serializers.ModelSerializer):
     maker_data = serializers.SerializerMethodField()
+    zip_task_id = serializers.SerializerMethodField()
     is_liked = serializers.SerializerMethodField()
     chips= serializers.SerializerMethodField()
     star = serializers.SerializerMethodField()
@@ -73,8 +86,11 @@ class GameDetailSerializer(serializers.ModelSerializer):
         model = Game
         fields = ("id", "maker_data", "title", "thumbnail",
                   "star", "content", "chips", "is_liked", "youtube_url",
-                  "gamefile", "gamepath", "register_state", "is_visible", "review_cnt")
+                  "gamefile", "gamepath", "register_state", "is_visible", "review_cnt", "zip_task_id")
         read_only_fields = ('maker',)
+
+    def get_zip_task_id(self, obj):
+        return get_zip_task_id_for(obj, self.context.get("user"))
     
     def get_maker_data(self, obj):
         return {

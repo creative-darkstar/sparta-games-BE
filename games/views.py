@@ -45,7 +45,7 @@ from spartagames.pagination import ReviewCustomPagination
 import random
 from .tasks import send_discord_notification_task, notify_game_register_task, validate_game_zip_task
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key
+from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key, zip_validation_task_id
 from .querysets import (
     with_game_list_optimizations,
     with_game_detail_optimizations,
@@ -55,7 +55,21 @@ from .querysets import (
 logger = logging.getLogger("sparta_games")
 
 
-def _on_gamefile_committed(old_name, game_id, file_key):
+def _publish_zip_validation(game_id, file_key, task_id):
+    """
+    계산된 task_id로 ZIP 검증 작업을 발행한다. 발행 실패는 접수(DB 커밋)와 분리해 기록만 한다.
+    재처리: zip_validation_task_id(game.id, game.gamefile.name)로 같은 ID를 계산해 재발행한다.
+    """
+    try:
+        validate_game_zip_task.apply_async(args=[game_id, file_key], task_id=task_id)
+    except Exception:
+        logger.error(
+            f"Failed to publish zip validation task {task_id} for game {game_id} ({file_key})",
+            exc_info=True,
+        )
+
+
+def _on_gamefile_committed(old_name, game_id, file_key, task_id):
     if old_name:
         try:
             s3 = get_s3_client()
@@ -65,7 +79,7 @@ def _on_gamefile_committed(old_name, game_id, file_key):
                 f"Failed to delete old gamefile media/{old_name} for game {game_id}",
                 exc_info=True,
             )
-    validate_game_zip_task.delay(game_id, file_key)
+    _publish_zip_validation(game_id, file_key, task_id)
 
 
 class GameListAPIView(APIView):
@@ -280,13 +294,22 @@ class GameListAPIView(APIView):
             game_id = game.pk
             user_id = request.user.pk
             game_title = game.title
-            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid))
+            task_id = zip_validation_task_id(game_id, file_key)
+            # 알림 발행 실패가 검증 작업 발행을 막지 않도록 robust=True로 격리
+            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid), robust=True)
             transaction.on_commit(
-                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                robust=True,
             )
-            transaction.on_commit(lambda gid=game.id, key=file_key: validate_game_zip_task.delay(gid, key))
+            transaction.on_commit(
+                lambda gid=game_id, key=file_key, tid=task_id: _publish_zip_validation(gid, key, tid),
+                robust=True,
+            )
 
-        return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        return std_response(
+            data={"game_id": game_id, "task_id": task_id},
+            message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK,
+        )
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -586,16 +609,21 @@ class GameDetailAPIView(APIView):
                 game_title = game.title
                 msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
                 transaction.on_commit(
-                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg)
+                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg),
+                    robust=True,
                 )
                 transaction.on_commit(
-                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title)
+                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                    robust=True,
                 )
 
+            task_id = None
             if file_key:
+                task_id = zip_validation_task_id(game.id, file_key)
                 delete_name = old_gamefile_name if old_gamefile_name != file_key else None
                 transaction.on_commit(
-                    lambda name=delete_name, gid=game.id, key=file_key: _on_gamefile_committed(name, gid, key)
+                    lambda name=delete_name, gid=game.id, key=file_key, tid=task_id: _on_gamefile_committed(name, gid, key, tid),
+                    robust=True,
                 )
 
         # ---------- 외부 I/O (트랜잭션 커밋 후) ----------
@@ -607,7 +635,11 @@ class GameDetailAPIView(APIView):
             except Exception as e:
                 logger.error(f"game {game.pk}: S3 파일 삭제 실패: {e}", exc_info=True)
 
-        return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        # 파일 유지 수정은 새 검증 작업이 없으므로 task_id를 내려주지 않는다.
+        return std_response(
+            data={"game_id": game.pk, "task_id": task_id},
+            message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK,
+        )
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """

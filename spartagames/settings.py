@@ -178,6 +178,9 @@ CELERY_RESULT_BACKEND = 'django-db'
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TASK_TRACK_STARTED = True
+# 결과 보관기간. ZIP 검증 결과 조회 보장 기간(games.utils.ZIP_RESULT_RETENTION)과 같게 둔다.
+# 전역 설정이라 다른 task 결과도 7일 보관된다. 만료 결과는 beat의 celery.backend_cleanup이 정리한다.
+CELERY_RESULT_EXPIRES = timedelta(days=7)
 
 # Celery Beat 설정 (스케줄링)
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'
