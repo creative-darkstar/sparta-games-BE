@@ -243,3 +243,26 @@ class ZipTaskIdExposureTests(TestCase):
     def test_my_games(self):
         self.assertEqual(self.my_games(self.maker)[0]["zip_task_id"], zip_validation_task_id(self.game.id, FILE_KEY))
         self.assertIsNone(self.my_games(self.other)[0]["zip_task_id"])
+
+
+@override_settings(MIDDLEWARE=SYNC_MIDDLEWARE)
+class MyGamesEmptyListTests(TestCase):
+    """F04: 게임이 없는 계정의 개발목록은 404가 아닌 200 빈 페이지"""
+
+    def test_empty_list_200(self):
+        user = make_user()
+        client = APIClient()
+        client.force_authenticate(user)
+        res = client.get(f"/users/api/{user.id}/games/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["data"], [])
+        self.assertEqual(res.json()["pagination"]["count"], 0)
+
+    def test_other_user_sees_only_approved(self):
+        maker = make_user()
+        make_game(maker, register_state=0)
+        client = APIClient()
+        client.force_authenticate(make_user("other@example.com", "other"))
+        res = client.get(f"/users/api/{maker.id}/games/")
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.json()["data"], [])

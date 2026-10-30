@@ -448,14 +448,8 @@ def my_games(request, user_id):
             error_code="SERVER_FAIL",
             status_code=status.HTTP_404_NOT_FOUND
         )
+    # 게임이 없어도 404가 아닌 빈 페이지(200)로 응답한다. FE가 조회 실패와 실제 빈 목록을 구분할 수 있게 한다.
     my_games = user.games.filter(is_visible=True).order_by('-created_at')
-    if not my_games.exists():
-        return std_response(
-            message=f"{request.user}가 제작한 게임이 없습니다.",
-            status="fail",
-            error_code="SERVER_FAIL",
-            status_code=status.HTTP_404_NOT_FOUND
-        )
 
     # 대상 일치 여부 확인
     if user != request.user:
