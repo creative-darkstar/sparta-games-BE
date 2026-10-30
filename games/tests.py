@@ -266,3 +266,63 @@ class MyGamesEmptyListTests(TestCase):
         res = client.get(f"/users/api/{maker.id}/games/")
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["data"], [])
+
+
+class FakeRedis:
+    def __init__(self, locked=False):
+        self.locked = locked
+        self.deleted = []
+
+    def set(self, *args, **kwargs):
+        return not self.locked
+
+    def delete(self, key):
+        self.deleted.append(key)
+
+
+@override_settings(MIDDLEWARE=SYNC_MIDDLEWARE)
+@mock.patch("games.views.assert_gamefile_key", side_effect=lambda key: (key, None))
+class GamefileKeyReuseTests(TestCase):
+    """F06: 이미 사용된 업로드 키로 등록·교체하면 409"""
+
+    def setUp(self):
+        self.client = APIClient()
+        self.maker = make_user()
+        self.client.force_authenticate(self.maker)
+        self.game = make_game(self.maker, register_state=2)
+
+    def put_gamefile(self, game, key):
+        return self.client.put(f"/games/api/list/{game.id}/", {"gamefile": key}, format="multipart")
+
+    @mock.patch("games.utils._redis_client")
+    def test_same_key_on_same_game_409(self, redis_client, _assert):
+        redis_client.return_value = FakeRedis()
+        self.assertEqual(self.put_gamefile(self.game, FILE_KEY).status_code, 409)
+
+    @mock.patch("games.utils._redis_client")
+    def test_key_used_by_other_game_409(self, redis_client, _assert):
+        redis_client.return_value = FakeRedis()
+        other = make_game(self.maker, gamefile=recent_key("other"), register_state=2)
+        self.assertEqual(self.put_gamefile(other, FILE_KEY).status_code, 409)
+
+    @mock.patch("games.utils._redis_client")
+    def test_concurrent_request_locked_409(self, redis_client, _assert):
+        redis_client.return_value = FakeRedis(locked=True)
+        self.assertEqual(self.put_gamefile(self.game, recent_key("new")).status_code, 409)
+
+    @mock.patch("games.views._on_gamefile_committed")
+    @mock.patch("games.utils._redis_client")
+    def test_new_key_accepted_and_lock_released(self, redis_client, _committed, _assert):
+        fake = FakeRedis()
+        redis_client.return_value = fake
+        key = recent_key("new")
+        with self.captureOnCommitCallbacks(execute=True):
+            res = self.put_gamefile(self.game, key)
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["message"], "검수 요청이 접수되었습니다.")
+        self.assertEqual(body["data"]["task_id"], zip_validation_task_id(self.game.id, key))
+        self.assertEqual(fake.deleted, [f"upload_key_lock:{key}"])
+        self.game.refresh_from_db()
+        self.assertEqual(self.game.register_state, 0)
+        _committed.assert_called_once()

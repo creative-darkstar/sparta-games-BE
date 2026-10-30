@@ -45,7 +45,9 @@ from spartagames.pagination import ReviewCustomPagination
 import random
 from .tasks import send_discord_notification_task, notify_game_register_task, validate_game_zip_task
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, assert_gamefile_key, zip_validation_task_id
+from .utils import (
+    assign_chip_based_on_difficulty, validate_image, assert_gamefile_key, zip_validation_task_id, gamefile_key_claim,
+)
 from .querysets import (
     with_game_list_optimizations,
     with_game_detail_optimizations,
@@ -256,55 +258,59 @@ class GameListAPIView(APIView):
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
         # DB 작업(게임 생성 + 카테고리/칩 + 스크린샷 + 로그)을 원자적으로 처리
-        with transaction.atomic():
-            # Game model에 우선 저장
-            game = Game.objects.create(
-                title=request.data.get('title'),
-                thumbnail=thumbnail,
-                youtube_url=request.data.get('youtube_url'),
-                maker=request.user,
-                content=request.data.get('content'),
-                gamefile=file_key,
-                star=0,
-                review_cnt=0,
-            )
+        # F06: 같은 업로드 키의 재사용·동시 제출 차단
+        with gamefile_key_claim(file_key) as key_error:
+            if key_error:
+                return std_response(message=key_error, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_409_CONFLICT)
+            with transaction.atomic():
+                # Game model에 우선 저장
+                game = Game.objects.create(
+                    title=request.data.get('title'),
+                    thumbnail=thumbnail,
+                    youtube_url=request.data.get('youtube_url'),
+                    maker=request.user,
+                    content=request.data.get('content'),
+                    gamefile=file_key,
+                    star=0,
+                    review_cnt=0,
+                )
 
-            # 카테고리 하나만 설정
-            game.category.set([category])
+                # 카테고리 하나만 설정
+                game.category.set([category])
 
-            new_game_chip, created = Chip.objects.get_or_create(name="New Game")
-            game.chip.add(new_game_chip)
+                new_game_chip, created = Chip.objects.get_or_create(name="New Game")
+                game.chip.add(new_game_chip)
 
-            # 기본 'NORMAL' 칩 추가
-            normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
-            game.chip.add(normal_chip)
+                # 기본 'NORMAL' 칩 추가
+                normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+                game.chip.add(normal_chip)
 
-            # 이후 Screenshot model에 저장
-            for item in screenshots:
-                scrfeenshot=Screenshot.objects.create(src=item, game=game)
+                # 이후 Screenshot model에 저장
+                for item in screenshots:
+                    scrfeenshot=Screenshot.objects.create(src=item, game=game)
 
-            # 게임 등록 로그에 데이터 추가
-            game.logs_game.create(
-                recoder = request.user,
-                maker = request.user,
-                game = game,
-                content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
-            )
+                # 게임 등록 로그에 데이터 추가
+                game.logs_game.create(
+                    recoder = request.user,
+                    maker = request.user,
+                    game = game,
+                    content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
+                )
 
-            game_id = game.pk
-            user_id = request.user.pk
-            game_title = game.title
-            task_id = zip_validation_task_id(game_id, file_key)
-            # 알림 발행 실패가 검증 작업 발행을 막지 않도록 robust=True로 격리
-            transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid), robust=True)
-            transaction.on_commit(
-                lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
-                robust=True,
-            )
-            transaction.on_commit(
-                lambda gid=game_id, key=file_key, tid=task_id: _publish_zip_validation(gid, key, tid),
-                robust=True,
-            )
+                game_id = game.pk
+                user_id = request.user.pk
+                game_title = game.title
+                task_id = zip_validation_task_id(game_id, file_key)
+                # 알림 발행 실패가 검증 작업 발행을 막지 않도록 robust=True로 격리
+                transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid), robust=True)
+                transaction.on_commit(
+                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                    robust=True,
+                )
+                transaction.on_commit(
+                    lambda gid=game_id, key=file_key, tid=task_id: _publish_zip_validation(gid, key, tid),
+                    robust=True,
+                )
 
         return std_response(
             data={"game_id": game_id, "task_id": task_id},
@@ -574,58 +580,62 @@ class GameDetailAPIView(APIView):
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # ---------- DB 작업 (원자적으로 처리) ----------
-        with transaction.atomic():
-            game.save()
+        # F06: 같은 업로드 키의 재사용·동시 제출 차단 (파일 교체 시에만)
+        with gamefile_key_claim(file_key) as key_error:
+            if key_error:
+                return std_response(message=key_error, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_409_CONFLICT)
+            with transaction.atomic():
+                game.save()
 
-            # 카테고리 변경 처리 (1개만 허용)
-            if category is not None and not game.category.filter(pk=category.pk).exists():
-                game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
-                changes.append("category")
+                # 카테고리 변경 처리 (1개만 허용)
+                if category is not None and not game.category.filter(pk=category.pk).exists():
+                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
+                    changes.append("category")
 
-            # 기존 스크린샷 DB 삭제
-            for item in screenshots_to_delete:
-                item.delete()
+                # 기존 스크린샷 DB 삭제
+                for item in screenshots_to_delete:
+                    item.delete()
 
-            # 새로운 스크린샷 DB 등록
-            for item in screenshots:
-                screenshot = Screenshot.objects.create(src=item, game=game)
+                # 새로운 스크린샷 DB 등록
+                for item in screenshots:
+                    screenshot = Screenshot.objects.create(src=item, game=game)
 
-            # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
-            if changes:
-                if "gamefile" in changes:
-                    log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-                else:
-                    log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-                game.logs_game.create(
-                    recoder=request.user,
-                    maker=request.user,
-                    game=game,
-                    content=log_content,
-                )
+                # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
+                if changes:
+                    if "gamefile" in changes:
+                        log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                    else:
+                        log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                    game.logs_game.create(
+                        recoder=request.user,
+                        maker=request.user,
+                        game=game,
+                        content=log_content,
+                    )
 
-            # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
-            if game.register_state == 0:
-                game_id = game.pk
-                user_id = request.user.pk
-                game_title = game.title
-                msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
-                transaction.on_commit(
-                    lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg),
-                    robust=True,
-                )
-                transaction.on_commit(
-                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
-                    robust=True,
-                )
+                # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
+                if game.register_state == 0:
+                    game_id = game.pk
+                    user_id = request.user.pk
+                    game_title = game.title
+                    msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
+                    transaction.on_commit(
+                        lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg),
+                        robust=True,
+                    )
+                    transaction.on_commit(
+                        lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                        robust=True,
+                    )
 
-            task_id = None
-            if file_key:
-                task_id = zip_validation_task_id(game.id, file_key)
-                delete_name = old_gamefile_name if old_gamefile_name != file_key else None
-                transaction.on_commit(
-                    lambda name=delete_name, gid=game.id, key=file_key, tid=task_id: _on_gamefile_committed(name, gid, key, tid),
-                    robust=True,
-                )
+                task_id = None
+                if file_key:
+                    task_id = zip_validation_task_id(game.id, file_key)
+                    delete_name = old_gamefile_name if old_gamefile_name != file_key else None
+                    transaction.on_commit(
+                        lambda name=delete_name, gid=game.id, key=file_key, tid=task_id: _on_gamefile_committed(name, gid, key, tid),
+                        robust=True,
+                    )
 
         # ---------- 외부 I/O (트랜잭션 커밋 후) ----------
         # 교체/삭제된 파일 S3에서 제거 (재시도·배치). 실패해도 DB는 이미 커밋되어 안전

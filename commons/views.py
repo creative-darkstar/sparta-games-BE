@@ -110,6 +110,9 @@ def generate_presigned_url_for_upload(base_path, extension, filename=None):
             'Key': object_key,
             'ContentType': 'application/zip',
             'Tagging': 'is_used=false',
+            # F06: 객체가 이미 있으면 S3가 412로 거부 → 검증 후 같은 URL로 파일 바꿔치기 차단.
+            # 서명된 헤더이므로 클라이언트는 If-None-Match: * 를 반드시 보내야 한다.
+            'IfNoneMatch': '*',
         },
         ExpiresIn=1800,
     )

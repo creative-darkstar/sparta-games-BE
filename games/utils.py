@@ -1,10 +1,16 @@
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone as dt_timezone
+from urllib.parse import urlparse
+import logging
 from PIL import Image
 import os
 import re
 import stat
 import uuid
 import zipfile
+
+import redis
+from django.conf import settings
 
 from botocore.exceptions import ClientError
 from django.core.files.uploadedfile import UploadedFile
@@ -126,6 +132,55 @@ def is_zip_result_expired(file_key, now=None):
         return False
     now = now or datetime.now(dt_timezone.utc)
     return now - submitted_at > ZIP_RESULT_RETENTION
+
+
+logger = logging.getLogger("sparta_games")
+
+GAMEFILE_KEY_LOCK_SECONDS = 60
+GAMEFILE_KEY_USED_MESSAGE = "이미 사용된 업로드 파일입니다. 파일을 다시 선택해주세요."
+
+
+def _redis_client():
+    url = urlparse(settings.CELERY_BROKER_URL)
+    return redis.Redis(host=url.hostname, port=url.port, password=url.password, db=0)
+
+
+@contextmanager
+def gamefile_key_claim(file_key):
+    """
+    F06: 업로드 키 재사용 차단. 블록 안에서 게임 생성·교체를 커밋한다.
+    yield 값이 None이면 사용 가능, 문자열이면 409로 돌려줄 메시지다.
+    - 요청 처리 동안만 Redis 단기 잠금(SET NX EX)으로 같은 키의 동시 요청을 막는다. 영구 매핑이 아니다.
+    - 이미 어떤 Game(삭제 처리 포함)이 쓰는 키면 거부한다.
+    - Redis 장애 시에는 잠금 없이 DB 확인만 수행한다(로그 기록).
+    """
+    if not file_key:
+        yield None
+        return
+
+    lock_key = f"upload_key_lock:{file_key}"
+    client = None
+    try:
+        client = _redis_client()
+        if not client.set(lock_key, "1", nx=True, ex=GAMEFILE_KEY_LOCK_SECONDS):
+            yield GAMEFILE_KEY_USED_MESSAGE
+            return
+    except redis.RedisError:
+        logger.warning(f"gamefile_key_claim: Redis lock unavailable for {file_key}", exc_info=True)
+        client = None
+
+    try:
+        from .models import Game  # 순환 import 방지
+        if Game.objects.filter(gamefile=file_key).exists():
+            yield GAMEFILE_KEY_USED_MESSAGE
+        else:
+            yield None
+    finally:
+        if client is not None:
+            try:
+                client.delete(lock_key)
+            except redis.RedisError:
+                logger.warning(f"gamefile_key_claim: failed to release lock for {file_key}", exc_info=True)
 
 
 def assert_gamefile_key(file_key):
