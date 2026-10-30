@@ -308,7 +308,8 @@ class GameListAPIView(APIView):
 
         return std_response(
             data={"game_id": game_id, "task_id": task_id},
-            message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK,
+            # 접수 시점 응답. ZIP 검증·관리자 검수는 이후 단계다.
+            message="검수 요청이 접수되었습니다.", status="success", status_code=status.HTTP_200_OK,
         )
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
@@ -638,7 +639,8 @@ class GameDetailAPIView(APIView):
         # 파일 유지 수정은 새 검증 작업이 없으므로 task_id를 내려주지 않는다.
         return std_response(
             data={"game_id": game.pk, "task_id": task_id},
-            message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK,
+            message="검수 요청이 접수되었습니다." if task_id else "게임 수정이 완료되었습니다.",
+            status="success", status_code=status.HTTP_200_OK,
         )
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
