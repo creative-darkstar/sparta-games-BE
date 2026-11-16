@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
+import os
 from datetime import timedelta
 from pathlib import Path
 from celery.schedules import crontab
@@ -34,6 +35,7 @@ ALLOWED_HOSTS = [
     '13.209.74.174',
     'localhost',
     '127.0.0.1',
+    'host.docker.internal',
 ]
 
 
@@ -155,23 +157,30 @@ DATABASES = {
     }
 }
 
+# 로컬: 기본값 127.0.0.1 (환경변수 설정 불필요)
+# Docker: docker-compose에서 REDIS_HOST=redis 주입
+REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            "hosts": [('127.0.0.1', 6379)],  # Redis 서버 주소
-            # "db": 1,  # <-- 1번 데이터베이스 사용
+            "hosts": [(REDIS_HOST, REDIS_PORT)],
         },
     },
 }
 
-# Celery 브로커로 Django 데이터베이스 사용
-CELERY_BROKER_URL = 'redis://127.0.0.1:6379/0'
+# Celery 브로커로 Redis 사용
+CELERY_BROKER_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
 CELERY_RESULT_BACKEND = 'django-db'
 
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_TASK_TRACK_STARTED = True
+# 결과 보관기간. ZIP 검증 결과 조회 보장 기간(games.utils.ZIP_RESULT_RETENTION)과 같게 둔다.
+# 전역 설정이라 다른 task 결과도 7일 보관된다. 만료 결과는 beat의 celery.backend_cleanup이 정리한다.
+CELERY_RESULT_EXPIRES = timedelta(days=7)
 
 # Celery Beat 설정 (스케줄링)
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers.DatabaseScheduler'

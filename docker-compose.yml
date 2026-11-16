@@ -5,3 +5,65 @@ services:
     ports:
       - "6379:6379"
     restart: unless-stopped
+    networks:
+      - spartagames-net
+
+  spartagames-be:
+    build: .
+    command: daphne -b 0.0.0.0 -p 8000 spartagames.asgi:application
+    # deploy:
+    #   replicas: 3
+    restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+    volumes:
+    - ./db.sqlite3:/usr/src/app/db.sqlite3
+    networks:
+      - spartagames-net
+
+  celery-worker:
+    build: .
+    command: celery -A spartagames worker --loglevel=info
+    restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+    volumes:
+      - ./db.sqlite3:/usr/src/app/db.sqlite3
+    networks:
+      - spartagames-net
+
+  celery-beat:
+    build: .
+    command: celery -A spartagames beat --loglevel=info
+    restart: always
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    depends_on:
+      - redis
+    volumes:
+      - ./db.sqlite3:/usr/src/app/db.sqlite3
+    networks:
+      - spartagames-net
+
+  proxy-be:
+    image: nginx:1.21.5-alpine
+    container_name: sparta-proxy-server
+    restart: always
+    depends_on:
+      - spartagames-be
+    ports:
+      - '8000:80'
+    volumes:
+      - ./nginx-be.conf:/etc/nginx/nginx.conf
+    networks:
+      - spartagames-net
+
+networks:
+  spartagames-net:

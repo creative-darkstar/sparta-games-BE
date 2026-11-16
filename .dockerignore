@@ -1,0 +1,13 @@
+# --- never send to Docker context
+.git
+.gitignore
+node_modules
+coverage
+.vscode
+.idea
+.DS_Store
+*.log
+
+# --- env (이미 CI/런타임에서 주입)
+.env
+.env.*

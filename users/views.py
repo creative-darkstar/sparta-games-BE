@@ -1,5 +1,3 @@
-import re
-
 from django.core.files.storage import default_storage
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404, render
@@ -16,15 +14,18 @@ from spartagames.utils import std_response
 from spartagames.pagination import CustomPagination
 
 from .serializers import MyGameListSerializer
+from accounts.constants import NICKNAME_PATTERN, PASSWORD_PATTERN
 
 from accounts.models import EmailVerification
 from games.models import (
     Game,
     GameCategory,
 )
+from games.querysets import with_game_list_optimizations
 from games.serializers import GameListSerializer
 from teambuildings.models import TeamBuildPost
 from teambuildings.pagination import MyTeamBuildPostPagination
+from teambuildings.querysets import with_teambuild_post_list_optimizations
 from teambuildings.serializers import TeamBuildPostSerializer
 from qnas.models import DeleteUsers
 
@@ -32,12 +33,6 @@ from qnas.models import DeleteUsers
 # ---------- API---------- #
 class ProfileAPIView(APIView):
     permission_classes = [IsAuthenticatedOrReadOnly]
-
-    # 유효성 검사 정규식 패턴
-    EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
-    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
 
     def get(self, request, user_id):
         try:
@@ -110,7 +105,7 @@ class ProfileAPIView(APIView):
         if nickname == user.nickname:
             pass
         # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
-        elif not self.NICKNAME_PATTERN.match(nickname):
+        elif not NICKNAME_PATTERN.match(nickname):
             return std_response(
                 message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
                 status="fail",
@@ -126,10 +121,11 @@ class ProfileAPIView(APIView):
             )
         
         # 관심 게임 카테고리
-        categories = request.data.get("game_category", '')
-        categories = categories.split(',')
-        if categories:
-            game_categories = GameCategory.objects.filter(name__in=categories)
+        # game_category 미전송(또는 빈 값)이면 기존 카테고리를 유지하고, 값이 있을 때만 검증 후 갱신한다.
+        category_param = request.data.get("game_category", "")
+        category_names = [name for name in category_param.split(',') if name]
+        if category_names:
+            game_categories = GameCategory.objects.filter(name__in=category_names)
             if not game_categories.exists():
                 return std_response(
                     message="올바른 game category를 입력해주세요.",
@@ -138,8 +134,6 @@ class ProfileAPIView(APIView):
                     status_code=status.HTTP_400_BAD_REQUEST
                 )
             user.game_category.set(game_categories)
-        else:
-            categories = list(user.game_category.values_list('id', flat=True))
         
         # # 이메일 검증
         # email = self.request.data.get('email', user.email)
@@ -147,7 +141,7 @@ class ProfileAPIView(APIView):
         # if email == user.email:
         #     pass
         # # 이메일이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
-        # elif not self.EMAIL_PATTERN.match(email):
+        # elif not EMAIL_PATTERN.match(email):
         #     return Response({"error_message": "올바른 email을 입력해주세요."})
         # elif get_user_model().objects.filter(email=email).exists():
         #     return Response({"error_message": "이미 존재하는 email입니다.."})
@@ -161,14 +155,16 @@ class ProfileAPIView(APIView):
         image = self.request.data.get("image")
         # 이미지를 삭제하는 경우
         if image == "":
-            # 기존 파일 s3에서 삭제
-            default_storage.delete(user.image.name)
+            # 기존 파일이 있을 때만 s3에서 삭제 (빈 경로 삭제 방지)
+            if user.image:
+                default_storage.delete(user.image.name)
             # 데이터 비우기
             user.image = None
         # 이미지를 변경하는 경우
         elif image is not None:
-            # 기존 파일 s3에서 삭제
-            default_storage.delete(user.image.name)
+            # 기존 파일이 있을 때만 s3에서 삭제 (빈 경로 삭제 방지)
+            if user.image:
+                default_storage.delete(user.image.name)
             # 데이터 변경
             user.image = self.request.FILES.get("image")
         # 유저 / 메이커 구분
@@ -231,11 +227,6 @@ class ProfileAPIView(APIView):
 
 @api_view(["GET"])
 def check_nickname(request):
-    # 유효성 검사 정규식 패턴
-    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
-
     nickname = request.data.get('nickname', None)
         
     # 닉네임이 유효하지 않거나 다른 유저의 이메일로 수정하려고 할 경우 error
@@ -263,11 +254,6 @@ def check_nickname(request):
 
 @api_view(["PUT"])
 def change_password(request, user_id):
-    # 유효성 검사 정규식 패턴
-    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
-    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
-    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
-
     try:
         user = get_user_model().objects.get(pk=user_id, is_active=True)
     except get_user_model().DoesNotExist:
@@ -382,11 +368,6 @@ def password_verify_code(request):
 
 @api_view(["PUT"])
 def reset_password(request):
-    # 유효성 검사 정규식 패턴
-    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
-    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
-    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
-    
     email = request.data.get("email")
     code = request.data.get('code')
     new_password = request.data.get("new_password")
@@ -467,25 +448,22 @@ def my_games(request, user_id):
             error_code="SERVER_FAIL",
             status_code=status.HTTP_404_NOT_FOUND
         )
+    # 게임이 없어도 404가 아닌 빈 페이지(200)로 응답한다. FE가 조회 실패와 실제 빈 목록을 구분할 수 있게 한다.
     my_games = user.games.filter(is_visible=True).order_by('-created_at')
-    if not my_games.exists():
-        return std_response(
-            message=f"{request.user}가 제작한 게임이 없습니다.",
-            status="fail",
-            error_code="SERVER_FAIL",
-            status_code=status.HTTP_404_NOT_FOUND
-        )
 
     # 대상 일치 여부 확인
     if user != request.user:
         my_games = my_games.filter(register_state=1)
+
+    # N+1 제거: maker/chip/category 프리페치 + is_liked(프로필 주인 기준) annotate
+    my_games = with_game_list_optimizations(my_games, user)
 
     # 페이지네이션 적용
     paginator = CustomPagination()
     paginated_data = paginator.paginate_queryset(my_games, request)
     
     # 시리얼라이저 적용
-    serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user})
+    serializer = MyGameListSerializer(paginated_data, many=True, context={'user': user, 'viewer': request.user})
     data = paginator.get_paginated_response(serializer.data).data
     
     # 리턴
@@ -537,11 +515,15 @@ def like_games(request, user_id):
     like_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1)
     if not like_games.exists():
         return std_response(
-            data={},
+            data=[],
             message=f"{request.user}가 즐겨찾기한 게임이 없습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            pagination={"count": 0, "next": None, "previous": None},
+            status_code=status.HTTP_200_OK
         )
+
+    # N+1 제거: maker/chip/category 프리페치 + is_liked(프로필 주인 기준) annotate
+    like_games = with_game_list_optimizations(like_games, user)
 
     # 페이지네이션 적용
     paginator = CustomPagination()
@@ -615,21 +597,27 @@ def gamepacks(request, user_id):
     
     # 게임팩 세팅
     # 1. 즐겨찾기한 게임
-    liked_games = Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at')[:4]
+    liked_games = with_game_list_optimizations(
+        Game.objects.filter(likes__user=user, is_visible=True, register_state=1).order_by('-created_at'),
+        user,
+    )[:4]
     # 2. 관심 있는 카테고리의 게임 가져오기
     interested_categories = user.game_category.all()
-    category_games = Game.objects.filter(
-        category__in=interested_categories,
-        is_visible=True,
-        register_state=1
-    ).exclude(likes__user=user).distinct().order_by('-star','-created_at')
+    category_games = with_game_list_optimizations(
+        Game.objects.filter(
+            category__in=interested_categories,
+            is_visible=True,
+            register_state=1
+        ).exclude(likes__user=user).distinct().order_by('-star','-created_at'),
+        user,
+    )
     # 좋아요한 게임과 최근 플레이한 게임을 조합하여 최대 4개의 게임으로 구성
-    liked_games_count = liked_games.count()
+    # liked_games를 한 번만 평가(list)하여 count()로 인한 중복 쿼리를 제거한다.
+    combined_games = list(liked_games)
+    liked_games_count = len(combined_games)
     if liked_games_count < 4:
         additional_category_games = category_games[:4 - liked_games_count]
-        combined_games = list(liked_games) + list(additional_category_games)
-    else:
-        combined_games = list(liked_games)  # 좋아요한 게임만으로 4개가 이미 채워짐
+        combined_games = combined_games + list(additional_category_games)
     
     # 리턴
     if combined_games:
@@ -640,7 +628,10 @@ def gamepacks(request, user_id):
             status_code=status.HTTP_200_OK
         )
     else:
-        latest_games=list(Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at')[:4])
+        latest_games=list(with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1).order_by('-created_at'),
+            user,
+        )[:4])
         serializer = GameListSerializer(latest_games, many=True, context={'user': user})
         return std_response(
             data=serializer.data,
@@ -670,10 +661,15 @@ def recently_played_games(request, user_id):
         )
     
     # 최근 플레이한 게임
-    recently_played_games = Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct()
+    recently_played_games = with_game_list_optimizations(
+        Game.objects.filter(is_visible=True, register_state=1, totalplaytime__user=user).order_by('-totalplaytime__latest_at').distinct(),
+        user,
+    )
 
     # 리턴
-    if recently_played_games:
+    # 주의: prefetch가 걸린 쿼리셋을 truthy 평가하면 전체 결과를 메모리에 올려 페이지네이션이 무력화되므로
+    # exists()로 가벼운 존재 확인만 수행한다.
+    if recently_played_games.exists():
         # 페이지네이션 적용
         paginator = CustomPagination()
         paginated_data = paginator.paginate_queryset(recently_played_games, request)
@@ -691,10 +687,11 @@ def recently_played_games(request, user_id):
         )
     else:
         return std_response(
-            data={},
+            data=[],
             message="최근 플레이한 게임이 존재하지 않습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            pagination={"count": 0, "next": None, "previous": None},
+            status_code=status.HTTP_200_OK
         )
 
 
@@ -712,14 +709,18 @@ def teambuild_posts(request, user_id):
     teambuild_posts = TeamBuildPost.objects.filter(author=user, is_visible=True).distinct().order_by('-create_dt')
     if not teambuild_posts.exists():
         return std_response(
-            data={},
+            data={"teambuild_posts": []},
             message=f"{request.user}가 작성한 팀빌딩 모집글이 없습니다.",
             status="success",
-            status_code=status.HTTP_204_NO_CONTENT
+            pagination={"count": 0, "next": None, "previous": None},
+            status_code=status.HTTP_200_OK
         )
     # 다른 사람의 프로필을 조회하는 경우, '모집중' 상태의 글만 보이도록 필터링
     if user != request.user:
         teambuild_posts = teambuild_posts.filter(deadline__gte=timezone.now().date())
+
+    # N+1 제거: author/want_roles 프리페치
+    teambuild_posts = with_teambuild_post_list_optimizations(teambuild_posts)
 
     # 페이지네이션
     paginator = MyTeamBuildPostPagination()

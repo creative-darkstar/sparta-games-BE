@@ -1,12 +1,12 @@
 from datetime import datetime, timedelta
 import json
+import logging
 import os
 import requests  # S3 사용
 from urllib.parse import urlparse
 
-import boto3
-
 from django.utils import timezone
+from django.db import transaction
 from django.db.models import Q, Case, When, Value, IntegerField
 from django.core.files.storage import default_storage
 from django.core.files.images import ImageFile
@@ -27,6 +27,11 @@ from .pagination import (
     TeamBuildProfileListPagination,
     TeamBuildPostCommentPagination,
 )
+from .querysets import (
+    with_teambuild_post_list_optimizations,
+    with_teambuild_profile_list_optimizations,
+    with_teambuild_comment_list_optimizations,
+)
 from .serializers import (
     TeamBuildPostSerializer,
     TeamBuildPostDetailSerializer,
@@ -39,9 +44,11 @@ from .utils import validate_want_roles, validate_choice, extract_srcs, parse_lin
 from games.models import GameCategory
 from games.utils import validate_image
 
-from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
-from spartagames.utils import std_response
+from spartagames.config import AWS_S3_BUCKET_NAME, AWS_S3_BUCKET_IMAGES
+from spartagames.utils import std_response, get_s3_client, safe_s3_delete, safe_s3_tag
 from commons.models import UploadImage
+
+logger = logging.getLogger("sparta_games")
 
 
 @api_view(["GET"])
@@ -117,45 +124,46 @@ class TeamBuildPostAPIView(APIView):
             )
         ).order_by('is_open_priority', '-create_dt')
         # 마감하지 않은 것만 추천하도록 조건 추가
-        recommendedposts = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=timezone.now().date())
+        recommended_base = TeamBuildPost.objects.filter(is_visible=True, deadline__gte=today)
 
-        # 추천게시글/마감임박 게시글
-        if not request.user.is_authenticated:
-            # 비회원 유저 : 마감 임박 4개
-            recommendedposts = recommendedposts.order_by('deadline')[:4]
-        else:
-            # 유저 프로필 존재 여부 확인
+        # 추천게시글 PK 수집 (최대 4개)
+        # - 로그인 + 프로필 보유: 맞춤 글(역할/목적/기간) 우선, 부족하면 마감 임박 글로 채움
+        # - 비회원 또는 프로필 미보유: 마감 임박 4개
+        # 슬라이스/`|` 결합 쿼리셋은 select_related/prefetch_related가 유지되지 않으므로,
+        # 먼저 PK만 모은 뒤 최적화된 단일 쿼리로 조회하고 수집 순서를 보존한다.
+        profile = None
+        if request.user.is_authenticated:
             profile = TeamBuildProfile.objects.filter(author=request.user).first()
-            
-            if profile:
-                # 프로필 존재하면 직업 필터
-                my_role = profile.my_role
-                purpose = profile.purpose
-                duration = profile.duration
 
-                valid_duration = get_valid_duration_keys(duration)
-
-                _qs = recommendedposts.filter(
-                    want_roles=my_role,
-                    purpose=purpose,
+        if profile:
+            valid_duration = get_valid_duration_keys(profile.duration)
+            recommended_ids = list(
+                recommended_base.filter(
+                    want_roles=profile.my_role,
+                    purpose=profile.purpose,
                     duration__in=valid_duration,
-                ).order_by('-create_dt')[:4]
-                
-                # 맞춤 팀빌딩 모집글 개수가 4개 미만인 경우, 마감 임박 글을 추가하도록 수정
-                curr_cnt = _qs.count()
-                if curr_cnt < 4:
-                    # 마감 임박 팀빌딩 모집글 리스트
-                    # 맞춤 팀빌딩 모집글에 있는 경우 제외 (.exclude(pk__in=[row.pk for row in _qs]))
-                    # 마감 임박 팀빌딩 모집글 리스트는 본래 마감기한 순으로 정렬됨 (.order_by('deadline'))
-                    # (4 - 맞춤 팀빌딩 모집글 개수) 개수만큼 가져옴 ([:4 - curr_cnt])
-                    _extra_qs = recommendedposts.exclude(pk__in=[row.pk for row in _qs]).order_by('deadline')[:4 - curr_cnt]
-                    # 최종적으로 4개로 제한 (이중 체크)
-                    recommendedposts = (_qs | _extra_qs)[:4]
-                else:
-                    recommendedposts = _qs
-            else:
-                # 유저 프로필이 없으면 마감 임박 4개
-                recommendedposts = recommendedposts.order_by('deadline')[:4]
+                ).order_by('-create_dt').values_list('id', flat=True)[:4]
+            )
+            if len(recommended_ids) < 4:
+                extra_ids = list(
+                    recommended_base.exclude(pk__in=recommended_ids)
+                    .order_by('deadline')
+                    .values_list('id', flat=True)[:4 - len(recommended_ids)]
+                )
+                recommended_ids += extra_ids
+        else:
+            recommended_ids = list(
+                recommended_base.order_by('deadline').values_list('id', flat=True)[:4]
+            )
+
+        # 최적화된 단일 쿼리로 조회 후 수집 순서대로 재정렬
+        recommended_map = {
+            post.id: post
+            for post in with_teambuild_post_list_optimizations(
+                TeamBuildPost.objects.filter(pk__in=recommended_ids)
+            )
+        }
+        recommendedposts = [recommended_map[pk] for pk in recommended_ids if pk in recommended_map]
 
         if request.query_params.get('status_chip') == "open":
             teambuildposts = teambuildposts.filter(
@@ -223,17 +231,17 @@ class TeamBuildPostAPIView(APIView):
 
         # 페이지네이션
         paginator = TeamBuildPostPagination()
-        paginated_posts = paginator.paginate_queryset(teambuildposts, request)
+        paginated_posts = paginator.paginate_queryset(
+            with_teambuild_post_list_optimizations(teambuildposts), request
+        )
         serializer = TeamBuildPostSerializer(paginated_posts, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
 
         # 추천 게시글 직렬화
         recommended_serializer = RecommendedTeamBuildPostSerializer(recommendedposts, many=True)
 
-        # 프로필 존재 여부
-        profile_exists = False
-        if request.user.is_authenticated:
-            profile_exists = TeamBuildProfile.objects.filter(author=request.user).exists()
+        # 프로필 존재 여부 (위에서 조회한 profile 재사용)
+        profile_exists = profile is not None
 
         data = {
             "teambuild_posts": response_data["results"],
@@ -324,62 +332,55 @@ class TeamBuildPostAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # 객체 생성
-        post = TeamBuildPost.objects.create(
-            author=user,
-            title=request.data.get("title"),
-            purpose=request.data.get("purpose"),
-            duration=request.data.get("duration"),
-            meeting_type=request.data.get("meeting_type"),
-            deadline=deadline,
-            contact=request.data.get("contact"),
-            content=request.data.get("content"),
-        )
-
-        # 썸네일 할당
-        if thumbnail:
-            post.thumbnail = thumbnail
-        elif thumbnail_basic == "default":
-            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
-        post.save()
-
-        # 역할 추가
-        post.want_roles.set(Role.objects.filter(name__in=want_roles))
-
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        # content 에서 img src 파싱
-        srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        for src in srcs:
-            # DB 등록
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(post),
-                content_id=post.id,
-                uploader=user,
-                src=src,
-                is_used=True
+        # DB 작업은 원자적으로 처리 (게시글 생성 + 썸네일 + 역할 + content 이미지 DB 등록)
+        with transaction.atomic():
+            post = TeamBuildPost.objects.create(
+                author=user,
+                title=request.data.get("title"),
+                purpose=request.data.get("purpose"),
+                duration=request.data.get("duration"),
+                meeting_type=request.data.get("meeting_type"),
+                deadline=deadline,
+                contact=request.data.get("contact"),
+                content=request.data.get("content"),
             )
-            
-            # S3 태깅하기
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
-                }
-            )
+
+            # 썸네일 할당
+            if thumbnail:
+                post.thumbnail = thumbnail
+            elif thumbnail_basic == "default":
+                post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+            post.save()
+
+            # 역할 추가
+            post.want_roles.set(Role.objects.filter(name__in=want_roles))
+
+            # content 에서 img src 파싱 후 DB 등록
+            srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            for src in srcs:
+                UploadImage.objects.create(
+                    content_type=ContentType.objects.get_for_model(post),
+                    content_id=post.id,
+                    uploader=user,
+                    src=src,
+                    is_used=True
+                )
+
+        # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
+        if srcs:
+            try:
+                s3 = get_s3_client()
+                for src in srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"post {post.pk}: S3 tagging failed on create: {e}", exc_info=True)
+                return std_response(
+                    message="게시글은 등록되었으나 이미지 처리 중 오류가 발생했습니다.",
+                    status="warning",
+                    data={"post_id": post.pk},
+                    status_code=status.HTTP_201_CREATED
+                )
 
         return std_response(
             data={"post_id": post.pk},
@@ -472,7 +473,9 @@ def teambuild_post_search(request):
 
     # 페이지네이션
     paginator = TeamBuildPostPagination()
-    paginated_teambuild_posts = paginator.paginate_queryset(teambuild_posts, request)
+    paginated_teambuild_posts = paginator.paginate_queryset(
+        with_teambuild_post_list_optimizations(teambuild_posts), request
+    )
     _serializer = TeamBuildPostSerializer(paginated_teambuild_posts, many=True)
     response_data = paginator.get_paginated_response(_serializer.data).data
 
@@ -547,94 +550,23 @@ class TeamBuildPostDetailAPIView(APIView):
             )
         
         data = request.data
-        changes = []
 
-        # title
-        title = data.get("title", post.title)
-        if title != post.title:
-            changes.append("title")
-            post.title = title
-
-        # content
-        content = data.get("content", post.content)
-        if content != post.content:
-            changes.append("content")
-            post.content = content
-        
-            # content 에서 img src 파싱
-            old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
-            new_srcs = extract_srcs(post.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-            
-            # S3 클라이언트 불러오기
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            
-            # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
-            delete_srcs = set(old_srcs) - set(new_srcs)
-            if delete_srcs:
-                # DB 데이터 삭제
-                for src in delete_srcs:
-                    obj = UploadImage.objects.get(src=src)
-                    obj.delete()
-                # S3 오브젝트 삭제
-                s3.delete_objects(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Delete={
-                        'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                    }
+        # ---- 검증 먼저 (DB/S3 변경 전에 모두 수행) ----
+        # deadline 파싱/검증
+        deadline_raw = data.get("deadline")
+        parsed_deadline = None
+        if deadline_raw:
+            try:
+                parsed_deadline = datetime.strptime(deadline_raw, "%Y-%m-%d").date()
+            except ValueError:
+                return std_response(
+                    message="마감일은 YYYY-MM-DD 형식이어야 합니다.",
+                    status="error",
+                    error_code="CLIENT_FAIL",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
-                
-            # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
-            add_srcs = set(new_srcs) - set(old_srcs)
-            if add_srcs:
-                # DB 데이터 추가
-                _add_file_data = [
-                    UploadImage(
-                        content_type=ContentType.objects.get_for_model(post),
-                        content_id=post.id,
-                        uploader=request.user,
-                        src=x,
-                        is_used=True
-                    ) for x in add_srcs
-                ]
-                UploadImage.objects.bulk_create(_add_file_data)
-                # S3 오브젝트 태깅
-                for src in add_srcs:
-                    s3_file_key = urlparse(src).path.lstrip('/')
-                    s3.put_object_tagging(
-                        Bucket=AWS_S3_BUCKET_NAME,
-                        Key=s3_file_key,
-                        Tagging={
-                            'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
-                        }
-                    )
 
-        # contact
-        contact = data.get("contact", post.contact)
-        if contact != post.contact:
-            changes.append("contact")
-            post.contact = contact
-
-        # thumbnail
-        thumbnail = request.FILES.get("thumbnail", None)
-        thumbnail_basic = request.data.get("thumbnail_basic", None)
-        if thumbnail:
-            # 기존 썸네일 삭제(메인에서 활성화)
-            # if post.thumbnail:
-            #    default_storage.delete(post.thumbnail.name)
-            #    post.thumbnail.delete(save=False)
-            changes.append("thumbnail")
-            post.thumbnail = thumbnail
-        elif thumbnail_basic == "default":
-            # 기본 이미지로 설정
-            post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
-            changes.append("thumbnail")
-
-        # 선택지 유효성 검증 (필드 변경 시만 적용)
+        # 선택지 유효성 검증 (필드 변경 시만)
         for field, choices in [("purpose", PURPOSE_CHOICES), ("duration", DURATION_CHOICES), ("meeting_type", MEETING_TYPE_CHOICES),]:
             value = data.get(field)
             if value and value != getattr(post, field):
@@ -650,26 +582,8 @@ class TeamBuildPostDetailAPIView(APIView):
                         error_code="CLIENT_FAIL",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
-                setattr(post, field, value)
-                changes.append(field)
 
-        # deadline
-        deadline = data.get("deadline")
-        if deadline:
-            try:
-                deadline = datetime.strptime(deadline, "%Y-%m-%d").date()
-                if deadline != post.deadline:
-                    post.deadline = deadline
-                    changes.append("deadline")
-            except ValueError:
-                return std_response(
-                    message="마감일은 YYYY-MM-DD 형식이어야 합니다.",
-                    status="error",
-                    error_code="CLIENT_FAIL",
-                    status_code=status.HTTP_400_BAD_REQUEST
-                )
-
-        # want_roles
+        # want_roles 검증
         raw_roles = data.getlist("want_roles", [])
         want_roles, role_error = validate_want_roles(raw_roles)
         if role_error:
@@ -679,13 +593,108 @@ class TeamBuildPostDetailAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        if want_roles:
-            post.want_roles.set(Role.objects.filter(name__in=want_roles))
-            changes.append("want_roles")
 
-        # 변경사항이 있으면 저장
-        if changes:
-            post.save()
+        # content 이미지 변경 계산 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
+        content = data.get("content", post.content)
+        content_changed = content != post.content
+        delete_srcs = set()
+        add_srcs = set()
+        if content_changed:
+            old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)]
+            new_srcs = extract_srcs(content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            delete_srcs = set(old_srcs) - set(new_srcs)
+            add_srcs = set(new_srcs) - set(old_srcs)
+
+        # ---- DB 작업은 원자적으로 처리 ----
+        changes = []
+        with transaction.atomic():
+            # 동시 수정 방지를 위해 트랜잭션 내에서 행 잠금 후 재조회
+            post = TeamBuildPost.objects.select_for_update().get(id=post_id)
+
+            # title
+            title = data.get("title", post.title)
+            if title != post.title:
+                changes.append("title")
+                post.title = title
+
+            # content
+            if content_changed:
+                changes.append("content")
+                post.content = content
+                # 사라진 이미지 DB 삭제
+                if delete_srcs:
+                    UploadImage.objects.filter(src__in=delete_srcs).delete()
+                # 추가된 이미지 DB 등록
+                if add_srcs:
+                    UploadImage.objects.bulk_create([
+                        UploadImage(
+                            content_type=ContentType.objects.get_for_model(post),
+                            content_id=post.id,
+                            uploader=request.user,
+                            src=x,
+                            is_used=True
+                        ) for x in add_srcs
+                    ])
+
+            # contact
+            contact = data.get("contact", post.contact)
+            if contact != post.contact:
+                changes.append("contact")
+                post.contact = contact
+
+            # thumbnail
+            thumbnail = request.FILES.get("thumbnail", None)
+            thumbnail_basic = request.data.get("thumbnail_basic", None)
+            if thumbnail:
+                changes.append("thumbnail")
+                post.thumbnail = thumbnail
+            elif thumbnail_basic == "default":
+                post.thumbnail.name = "images/thumbnail/teambuildings/teambuilding_default.png"
+                changes.append("thumbnail")
+
+            # 선택지 적용 (위에서 검증 완료)
+            for field in ("purpose", "duration", "meeting_type"):
+                value = data.get(field)
+                if value and value != getattr(post, field):
+                    setattr(post, field, value)
+                    changes.append(field)
+
+            # deadline 적용
+            if parsed_deadline and parsed_deadline != post.deadline:
+                post.deadline = parsed_deadline
+                changes.append("deadline")
+
+            # want_roles 적용
+            if want_roles:
+                post.want_roles.set(Role.objects.filter(name__in=want_roles))
+                changes.append("want_roles")
+
+            # 변경사항이 있으면 저장
+            if changes:
+                post.save()
+                logger.info(f"post {post_id}: saved with changes={changes}")
+
+        # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
+        if delete_srcs or add_srcs:
+            try:
+                s3 = get_s3_client()
+                # 사라진 이미지 S3 삭제
+                if delete_srcs:
+                    keys_to_delete = [urlparse(x).path.lstrip('/') for x in delete_srcs]
+                    safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+                # 추가된 이미지 S3 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                # S3 실패 시 DB는 이미 커밋되어 안전, 로그에 기록
+                logger.error(f"post {post_id}: S3 operation failed: {e}", exc_info=True)
+                return std_response(
+                    message="이미지 처리 중 오류가 발생했습니다. 관리자에게 문의해주세요.",
+                    status="fail",
+                    error_code="SERVER_FAIL",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
         return std_response(
             data={
@@ -706,6 +715,7 @@ class TeamBuildPostDetailAPIView(APIView):
             return post
         # 권한 확인
         if request.user != post.author and not request.user.is_staff:
+            logger.warning(f"post {post_id}: unauthorized delete attempt by user {request.user.id}")
             return std_response(
                 message="작성자만 삭제할 수 있습니다.",
                 status="fail",
@@ -713,34 +723,34 @@ class TeamBuildPostDetailAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        # 게시물이 삭제됨에 따라 사용된 모든 이미지 src 수집 (S3 삭제는 커밋 후 수행)
         rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(post), content_id=post.id, is_used=True)
         srcs = [x.src for x in rows]
-        
-        if rows and srcs:
-            # DB 데이터 삭제
-            rows.delete()
-            
-            # S3 오브젝트 삭제
-            # S3 클라이언트 불러오기
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            # 삭제
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
-                }
-            )
 
-        # 팀빌딩 게시글 소프트 삭제
-        post.is_visible = False
-        post.save()
-        
+        # DB 작업은 원자적으로 처리 (이미지 DB 삭제 + 게시글 소프트 삭제)
+        with transaction.atomic():
+            if srcs:
+                rows.delete()
+            post.is_visible = False
+            post.save()
+            logger.info(f"post {post_id}: deleted by user {request.user.id} ({len(srcs)} images to clean)")
+
+        # 외부 I/O: S3 오브젝트 삭제 (트랜잭션 커밋 후)
+        if srcs:
+            try:
+                s3 = get_s3_client()
+                keys_to_delete = [urlparse(x).path.lstrip('/') for x in srcs]
+                safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+            except Exception as e:
+                # DB는 이미 삭제 커밋됨. S3 정리 실패는 로그로 남기고 별도 정리 대상으로 표시
+                # (향후 Celery 비동기 정리 작업으로 개선 예정)
+                logger.error(f"post {post_id}: S3 deletion failed: {e}", exc_info=True)
+                return std_response(
+                    message="게시글은 삭제되었으나 이미지 정리 중 오류가 발생했습니다.",
+                    status="warning",
+                    status_code=status.HTTP_200_OK
+                )
+
         return std_response(
             message="팀빌딩 게시글이 삭제되었습니다.",
             status="success",
@@ -789,8 +799,10 @@ class TeamBuildPostCommentAPIView(APIView):
     def get(self, request, post_id):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
-        # 모든 댓글 가져오기
-        comments = TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        # 모든 댓글 가져오기 (author N+1 제거)
+        comments = with_teambuild_comment_list_optimizations(
+            TeamBuildPostComment.objects.filter(post_id=post_id, is_visible=True)
+        )
 
         # 정렬 조건 적용
         if order == 'old':
@@ -861,7 +873,7 @@ class TeamBuildPostCommentDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):
+        if self.request.method.lower() in ('put', 'delete'):
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -1056,7 +1068,9 @@ class CreateTeamBuildProfileAPIView(APIView):
 
         # 페이지네이션 적용
         paginator = TeamBuildProfileListPagination()
-        paginated_profiles = paginator.paginate_queryset(profiles, request)
+        paginated_profiles = paginator.paginate_queryset(
+            with_teambuild_profile_list_optimizations(profiles), request
+        )
         serializer = TeamBuildProfileSerializer(paginated_profiles, many=True)
         response_data = paginator.get_paginated_response(serializer.data).data
 
@@ -1150,55 +1164,50 @@ class CreateTeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_400_BAD_REQUEST
             )
 
-        # 5. 프로필 생성
-        profile = TeamBuildProfile.objects.create(
-            author=author,
-            image=profile_image,
-            career=career,
-            my_role=my_role,
-            tech_stack=tech_stack,
-            portfolio=portfolio,  # JSONField에 list 직접 저장 가능
-            purpose=purpose,
-            duration=duration,
-            meeting_type=meeting_type,
-            contact=contact,
-            title=title,
-            content=content,
-        )
-        profile.game_genre.set(game_genres)
-
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-
-        # content 에서 img src 파싱
-        srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        for src in srcs:
-            UploadImage.objects.create(
-                content_type=ContentType.objects.get_for_model(profile),
-                content_id=profile.id,
-                uploader=author,
-                src=src,
-                is_used=True
+        # 5. DB 작업은 원자적으로 처리 (프로필 생성 + 장르 + content 이미지 DB 등록)
+        with transaction.atomic():
+            profile = TeamBuildProfile.objects.create(
+                author=author,
+                image=profile_image,
+                career=career,
+                my_role=my_role,
+                tech_stack=tech_stack,
+                portfolio=portfolio,  # JSONField에 list 직접 저장 가능
+                purpose=purpose,
+                duration=duration,
+                meeting_type=meeting_type,
+                contact=contact,
+                title=title,
+                content=content,
             )
+            profile.game_genre.set(game_genres)
 
-            s3_file_key = urlparse(src).path.lstrip('/')
-            s3.put_object_tagging(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Key=s3_file_key,
-                Tagging={
-                    'TagSet': [
-                        {
-                            'Key': 'is_used',
-                            'Value': 'true'
-                        }
-                    ]
-                }
-            )
+            # content 에서 img src 파싱 후 DB 등록
+            srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+            for src in srcs:
+                UploadImage.objects.create(
+                    content_type=ContentType.objects.get_for_model(profile),
+                    content_id=profile.id,
+                    uploader=author,
+                    src=src,
+                    is_used=True
+                )
+
+        # 외부 I/O: content 이미지 S3 태깅 (트랜잭션 커밋 후)
+        if srcs:
+            try:
+                s3 = get_s3_client()
+                for src in srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"profile {profile.id}: S3 tagging failed on create: {e}", exc_info=True)
+                return std_response(
+                    message="프로필은 등록되었으나 이미지 처리 중 오류가 발생했습니다.",
+                    status="warning",
+                    data={"profile_id": profile.id},
+                    status_code=status.HTTP_201_CREATED
+                )
 
         return std_response(
             data={"profile_id": profile.id},
@@ -1295,7 +1304,9 @@ def teambuild_profile_search(request):
 
     # 페이지네이션 적용
     paginator = TeamBuildProfileListPagination()
-    paginated_teambuild_profiles = paginator.paginate_queryset(teambuild_profiles, request)
+    paginated_teambuild_profiles = paginator.paginate_queryset(
+        with_teambuild_profile_list_optimizations(teambuild_profiles), request
+    )
     serializer = TeamBuildProfileSerializer(paginated_teambuild_profiles, many=True)
     response_data = paginator.get_paginated_response(serializer.data).data
 
@@ -1370,97 +1381,93 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 프로필 이미지 처리
-        if "image" in request.data:
-            if request.data.get("image") == "":
-                profile.image = None
-            elif request.FILES.get("image"):
-                profile.image = request.FILES["image"]
-
-        # 각 필드 업데이트
-        profile.career = request.data.get("career", profile.career)
-
-        role_name = request.data.get("my_role")
-        if role_name:
-            profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
-
-        game_genres = request.data.getlist("game_genre")
-        if game_genres:
-            genres = GameCategory.objects.filter(name__in=game_genres)
-            profile.game_genre.set(genres)
-
-        profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
-        profile.purpose = request.data.get("purpose", profile.purpose)
-        profile.duration = request.data.get("duration", profile.duration)
-        profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
-        profile.contact = request.data.get("contact", profile.contact)
-        profile.title = request.data.get("title", profile.title)
-        profile.content = request.data.get("content", profile.content)
-
+        # ---- 검증 먼저 (DB/S3 변경 전) ----
+        # portfolio 검증
         portfolio, error = parse_links(request.data)
         if error:
+            logger.warning(f"profile {profile.id}: invalid portfolio by user {request.user.id}")
             return std_response(
                 message=error,
                 status="fail",
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        profile.portfolio = portfolio
-        
-        # 이미지 처리
-        # content 에서 img src 파싱
-        old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
-        new_srcs = extract_srcs(profile.content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
-        
-        # S3 클라이언트 불러오기
-        s3 = boto3.client(
-            's3',
-            aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-            aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-            region_name=AWS_S3_REGION_NAME,
-        )
-        
-        # 수정 이후 사라진 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
-        delete_srcs = set(old_srcs) - set(new_srcs)
-        if delete_srcs:
-            # DB 데이터 삭제
-            for src in delete_srcs:
-                obj = UploadImage.objects.get(src=src)
-                obj.delete()
-            # S3 오브젝트 삭제
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in delete_srcs]
-                }
-            )
-        
-        # 수정 이후 추가된 이미지에 대해 UploadImage에 데이터 추가 및 S3 오브젝트 태깅
-        add_srcs = set(new_srcs) - set(old_srcs)
-        if add_srcs:
-            # DB 데이터 추가
-            _add_file_data = [
-                UploadImage(
-                    content_type=ContentType.objects.get_for_model(profile),
-                    content_id=profile.id,
-                    uploader=request.user,
-                    src=x,
-                    is_used=True
-                ) for x in add_srcs
-            ]
-            UploadImage.objects.bulk_create(_add_file_data)
-            # S3 오브젝트 태깅
-            for src in set(new_srcs) - set(old_srcs):
-                s3_file_key = urlparse(src).path.lstrip('/')
-                s3.put_object_tagging(
-                    Bucket=AWS_S3_BUCKET_NAME,
-                    Key=s3_file_key,
-                    Tagging={
-                        'TagSet': [{'Key': 'is_used', 'Value': 'true'}]
-                    }
-                )
 
-        profile.save()
+        role_name = request.data.get("my_role")
+        game_genres = request.data.getlist("game_genre")
+        new_content = request.data.get("content", profile.content)
+
+        # content 이미지 변경 계산 (DB 반영은 트랜잭션, S3 반영은 커밋 후)
+        old_srcs = [x.src for x in UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)]
+        new_srcs = extract_srcs(new_content, base_url=f"{AWS_S3_BUCKET_IMAGES}/screenshot/teambuildings")
+        delete_srcs = set(old_srcs) - set(new_srcs)
+        add_srcs = set(new_srcs) - set(old_srcs)
+
+        # ---- DB 작업은 원자적으로 처리 ----
+        with transaction.atomic():
+            # 동시 수정 방지를 위해 트랜잭션 내에서 행 잠금 후 재조회
+            profile = TeamBuildProfile.objects.select_for_update().get(pk=profile.pk)
+
+            # 프로필 이미지 처리 (S3 업로드는 save() 시점)
+            if "image" in request.data:
+                if request.data.get("image") == "":
+                    profile.image = None
+                elif request.FILES.get("image"):
+                    profile.image = request.FILES["image"]
+
+            # 각 필드 업데이트 (메모리)
+            profile.career = request.data.get("career", profile.career)
+            if role_name:
+                profile.my_role = Role.objects.filter(name=role_name).first() or profile.my_role
+            profile.tech_stack = request.data.get("tech_stack", profile.tech_stack)
+            profile.purpose = request.data.get("purpose", profile.purpose)
+            profile.duration = request.data.get("duration", profile.duration)
+            profile.meeting_type = request.data.get("meeting_type", profile.meeting_type)
+            profile.contact = request.data.get("contact", profile.contact)
+            profile.title = request.data.get("title", profile.title)
+            profile.content = new_content
+            profile.portfolio = portfolio
+
+            # 장르 갱신
+            if game_genres:
+                profile.game_genre.set(GameCategory.objects.filter(name__in=game_genres))
+            # 사라진 이미지 DB 삭제
+            if delete_srcs:
+                UploadImage.objects.filter(src__in=delete_srcs).delete()
+            # 추가된 이미지 DB 등록
+            if add_srcs:
+                UploadImage.objects.bulk_create([
+                    UploadImage(
+                        content_type=ContentType.objects.get_for_model(profile),
+                        content_id=profile.id,
+                        uploader=request.user,
+                        src=x,
+                        is_used=True
+                    ) for x in add_srcs
+                ])
+            profile.save()
+            logger.info(f"profile {profile.id}: updated by user {request.user.id}")
+
+        # ---- 외부 I/O: S3 (트랜잭션 커밋 후) ----
+        if delete_srcs or add_srcs:
+            try:
+                s3 = get_s3_client()
+                # 사라진 이미지 S3 삭제
+                if delete_srcs:
+                    keys_to_delete = [urlparse(x).path.lstrip('/') for x in delete_srcs]
+                    safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+                # 추가된 이미지 S3 태깅
+                for src in add_srcs:
+                    s3_file_key = urlparse(src).path.lstrip('/')
+                    safe_s3_tag(s3, AWS_S3_BUCKET_NAME, s3_file_key, {'is_used': 'true'})
+            except Exception as e:
+                logger.error(f"profile {profile.id}: S3 operation failed: {e}", exc_info=True)
+                return std_response(
+                    message="이미지 처리 중 오류가 발생했습니다. 관리자에게 문의해주세요.",
+                    status="fail",
+                    error_code="SERVER_FAIL",
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
 
         serializer = TeamBuildProfileSerializer(profile)
         return std_response(
@@ -1489,33 +1496,32 @@ class TeamBuildProfileAPIView(APIView):
                 status_code=status.HTTP_403_FORBIDDEN
             )
 
-        # 게시물이 삭제됨에 따라 사용된 모든 이미지에 대해, DB 데이터 삭제 및 S3 오브젝트 삭제 처리
+        # 삭제될 이미지 src 수집 (S3 삭제는 커밋 후 수행)
+        profile_id = profile.id
         rows = UploadImage.objects.filter(content_type=ContentType.objects.get_for_model(profile), content_id=profile.id, is_used=True)
         srcs = [x.src for x in rows]
-        
-        if rows and srcs:
-            # DB 데이터 삭제
-            rows.delete()
-            
-            # S3 오브젝트 삭제
-            # S3 클라이언트 불러오기
-            s3 = boto3.client(
-                's3',
-                aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-                aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-                region_name=AWS_S3_REGION_NAME,
-            )
-            # 삭제
-            s3.delete_objects(
-                Bucket=AWS_S3_BUCKET_NAME,
-                Delete={
-                    'Objects': [{'Key': urlparse(x).path.lstrip('/')} for x in srcs]
-                }
-            )
 
-        # 팀빌딩 프로필 완전 삭제
-        profile.delete()
-        
+        # DB 작업은 원자적으로 처리 (이미지 DB 삭제 + 프로필 완전 삭제)
+        with transaction.atomic():
+            if srcs:
+                rows.delete()
+            profile.delete()
+            logger.info(f"profile {profile_id}: deleted by user {request.user.id} ({len(srcs)} images to clean)")
+
+        # 외부 I/O: S3 오브젝트 삭제 (트랜잭션 커밋 후)
+        if srcs:
+            try:
+                s3 = get_s3_client()
+                keys_to_delete = [urlparse(x).path.lstrip('/') for x in srcs]
+                safe_s3_delete(s3, AWS_S3_BUCKET_NAME, keys_to_delete)
+            except Exception as e:
+                logger.error(f"profile {profile_id}: S3 deletion failed: {e}", exc_info=True)
+                return std_response(
+                    message="프로필은 삭제되었으나 이미지 정리 중 오류가 발생했습니다.",
+                    status="warning",
+                    status_code=status.HTTP_200_OK
+                )
+
         return std_response(
             message="팀빌딩 프로필 삭제 완료",
             status="success",

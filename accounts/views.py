@@ -2,7 +2,6 @@ import os
 import pickle
 import base64
 import random
-import re
 import requests
 import urllib.parse
 
@@ -29,6 +28,7 @@ from rest_framework_simplejwt.views import TokenObtainPairView
 from spartagames import config
 from spartagames.utils import std_response
 from .models import EmailVerification
+from .constants import EMAIL_PATTERN, NICKNAME_PATTERN, PASSWORD_PATTERN
 
 
 class AlertException(Exception):
@@ -100,14 +100,6 @@ class CustomLoginAPIView(TokenObtainPairView):
 
 
 class SignUpAPIView(APIView):
-    EMAIL_PATTERN = re.compile(r'^[a-zA-Z0-9+-_.]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$')
-    # 2025-02-19 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 10자)
-    # 2025-05-23 닉네임 패턴 수정 (한, 영, 숫자로 이루어진 4 ~ 12자)
-    NICKNAME_PATTERN = re.compile(r"^[가-힣a-zA-Z0-9]{4,12}$")
-    # 2025-05-23 비밀번호 패턴 수정 (영, 숫자, 특수문자 각각 최소 1개 이상으로 이루어진 8 ~ 32자)
-    # 특수문자 목록: ~`!@#$%^&*()_-+={}[]|:;"'<>,.?/
-    PASSWORD_PATTERN = re.compile(r'^(?=.*[a-zA-Z])(?=.*\d)(?=.*[~`!@#$%^&*()_\-+={}\[\]|\\:;"\'<>,.?/]).{8,32}$')
-
     def post(self, request):
         email = request.data.get("email")
         login_type = request.data.get("login_type", "DEFAULT")
@@ -144,7 +136,7 @@ class SignUpAPIView(APIView):
             )
         
         # email 유효성 검사
-        if not self.EMAIL_PATTERN.match(email):
+        if not EMAIL_PATTERN.match(email):
             return std_response(
                 message="올바른 email을 입력해주세요.",
                 status="fail",
@@ -174,7 +166,7 @@ class SignUpAPIView(APIView):
                 error_code="CLIENT_FAIL",
                 status_code=status.HTTP_400_BAD_REQUEST
             )
-        elif not self.NICKNAME_PATTERN.match(nickname):
+        elif not NICKNAME_PATTERN.match(nickname):
             return std_response(
                 message="올바른 닉네임을 입력해주세요. 4자 이상 12자 이하의 한영숫자입니다.",
                 status="fail",
@@ -197,7 +189,7 @@ class SignUpAPIView(APIView):
             code = request.data.get('code')
             
             # password 유효성 검사
-            if not self.PASSWORD_PATTERN.match(password):
+            if not PASSWORD_PATTERN.match(password):
                 return std_response(
                     message="올바른 password, password_check를 입력해주세요.",
                     status="fail",
