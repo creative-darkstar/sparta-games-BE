@@ -51,8 +51,10 @@ jobs:
           docker compose build
 
           echo "=== 3. DB 마이그레이션 / static 업로드(S3) ==="
-          docker compose run --rm spartagames-be python manage.py migrate --noinput
-          docker compose run --rm spartagames-be python manage.py collectstatic --noinput
+          # 이 스크립트는 ssh 표준입력(bash -s)으로 전달되므로,
+          # run 이 표준입력을 읽어 남은 스크립트를 삼키지 않도록 -T 와 < /dev/null 지정
+          docker compose run --rm -T spartagames-be python manage.py migrate --noinput < /dev/null
+          docker compose run --rm -T spartagames-be python manage.py collectstatic --noinput < /dev/null
 
           echo "=== 4. 컨테이너 재생성 및 실행 ==="
           mkdir -p logs
