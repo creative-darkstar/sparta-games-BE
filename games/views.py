@@ -1,9 +1,9 @@
 import logging
 import re
 
-from django.core.files.storage import default_storage
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.db import transaction
 from django.db.models import Q, Count
 
 from rest_framework.decorators import api_view
@@ -39,13 +39,49 @@ from .serializers import (
 from django.conf import settings
 from openai import OpenAI
 from django.utils import timezone
-from spartagames.utils import std_response
+from spartagames.utils import std_response, get_s3_client, safe_s3_delete
+from spartagames.config import AWS_S3_BUCKET_NAME
 from spartagames.pagination import ReviewCustomPagination
 import random
+from .tasks import send_discord_notification_task, notify_game_register_task, validate_game_zip_task
 from urllib.parse import urlencode
-from .utils import assign_chip_based_on_difficulty, validate_image, validate_zip_file, send_discord_notification
-from commons.models import Notification
-from commons.utils import NotificationSubType, create_notification
+from .utils import (
+    assign_chip_based_on_difficulty, validate_image, assert_gamefile_key, zip_validation_task_id, gamefile_key_claim,
+)
+from .querysets import (
+    with_game_list_optimizations,
+    with_game_detail_optimizations,
+    with_review_optimizations,
+)
+
+logger = logging.getLogger("sparta_games")
+
+
+def _publish_zip_validation(game_id, file_key, task_id):
+    """
+    계산된 task_id로 ZIP 검증 작업을 발행한다. 발행 실패는 접수(DB 커밋)와 분리해 기록만 한다.
+    재처리: zip_validation_task_id(game.id, game.gamefile.name)로 같은 ID를 계산해 재발행한다.
+    """
+    try:
+        validate_game_zip_task.apply_async(args=[game_id, file_key], task_id=task_id)
+    except Exception:
+        logger.error(
+            f"Failed to publish zip validation task {task_id} for game {game_id} ({file_key})",
+            exc_info=True,
+        )
+
+
+def _on_gamefile_committed(old_name, game_id, file_key, task_id):
+    if old_name:
+        try:
+            s3 = get_s3_client()
+            safe_s3_delete(s3, AWS_S3_BUCKET_NAME, [f"media/{old_name}"])
+        except Exception:
+            logger.error(
+                f"Failed to delete old gamefile media/{old_name} for game {game_id}",
+                exc_info=True,
+            )
+    _publish_zip_validation(game_id, file_key, task_id)
 
 
 class GameListAPIView(APIView):
@@ -77,14 +113,32 @@ class GameListAPIView(APIView):
             return std_response(message="카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": "카테고리가 2개 이하입니다. 카테고리가 최소 3개 필요합니다."}, status=status.HTTP_404_NOT_FOUND)
         selected_categories = random.sample(categories, 3)
-        
-        rand1 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[0]).order_by('-created_at')[:limit]
-        rand2 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[1]).order_by('-created_at')[:limit]
-        rand3 = Game.objects.filter(is_visible=True, register_state=1,category__name=selected_categories[2]).order_by('-created_at')[:limit]
-        favorites = Game.objects.filter(chip__name="Daily Top",is_visible=True, register_state=1).order_by('-created_at')[:limit]
-        updated_games = Game.objects.filter(is_visible=True, register_state=1).order_by('-updated_at')[:limit]
+
+        rand1 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[0]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        rand2 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[1]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        rand3 = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1, category__name=selected_categories[2]).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        favorites = with_game_list_optimizations(
+            Game.objects.filter(chip__name="Daily Top", is_visible=True, register_state=1).order_by('-created_at'),
+            request.user,
+        )[:limit]
+        updated_games = with_game_list_optimizations(
+            Game.objects.filter(is_visible=True, register_state=1).order_by('-updated_at'),
+            request.user,
+        )[:limit]
         if new_game_chip:
-            recent_games = Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at')[:limit]
+            recent_games = with_game_list_optimizations(
+                Game.objects.filter(chip=new_game_chip, is_visible=True, register_state=1).order_by('-created_at'),
+                request.user,
+            )[:limit]
         else:
             recent_games = Game.objects.none()  # new_game 칩이 없으면 빈 QuerySet
 
@@ -188,12 +242,9 @@ class GameListAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ZIP 파일 검증
-        gamefile = request.FILES.get("gamefile")
-        is_valid, error_msg = validate_zip_file(gamefile)
-        if not is_valid:
+        file_key, error_msg = assert_gamefile_key(request.data.get("gamefile"))
+        if error_msg:
             return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-            #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
 
         # 카테고리 이름 가져오기
         category_name = request.data.get('category')
@@ -206,53 +257,66 @@ class GameListAPIView(APIView):
             return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
             #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Game model에 우선 저장
-        game = Game.objects.create(
-            title=request.data.get('title'),
-            thumbnail=thumbnail,
-            youtube_url=request.data.get('youtube_url'),
-            maker=request.user,
-            content=request.data.get('content'),
-            gamefile=gamefile,
-            star=0,
-            review_cnt=0,
+        # DB 작업(게임 생성 + 카테고리/칩 + 스크린샷 + 로그)을 원자적으로 처리
+        # F06: 같은 업로드 키의 재사용·동시 제출 차단
+        with gamefile_key_claim(file_key) as key_error:
+            if key_error:
+                return std_response(message=key_error, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_409_CONFLICT)
+            with transaction.atomic():
+                # Game model에 우선 저장
+                game = Game.objects.create(
+                    title=request.data.get('title'),
+                    thumbnail=thumbnail,
+                    youtube_url=request.data.get('youtube_url'),
+                    maker=request.user,
+                    content=request.data.get('content'),
+                    gamefile=file_key,
+                    star=0,
+                    review_cnt=0,
+                )
+
+                # 카테고리 하나만 설정
+                game.category.set([category])
+
+                new_game_chip, created = Chip.objects.get_or_create(name="New Game")
+                game.chip.add(new_game_chip)
+
+                # 기본 'NORMAL' 칩 추가
+                normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
+                game.chip.add(normal_chip)
+
+                # 이후 Screenshot model에 저장
+                for item in screenshots:
+                    scrfeenshot=Screenshot.objects.create(src=item, game=game)
+
+                # 게임 등록 로그에 데이터 추가
+                game.logs_game.create(
+                    recoder = request.user,
+                    maker = request.user,
+                    game = game,
+                    content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
+                )
+
+                game_id = game.pk
+                user_id = request.user.pk
+                game_title = game.title
+                task_id = zip_validation_task_id(game_id, file_key)
+                # 알림 발행 실패가 검증 작업 발행을 막지 않도록 robust=True로 격리
+                transaction.on_commit(lambda gid=game_id: send_discord_notification_task.delay(gid), robust=True)
+                transaction.on_commit(
+                    lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                    robust=True,
+                )
+                transaction.on_commit(
+                    lambda gid=game_id, key=file_key, tid=task_id: _publish_zip_validation(gid, key, tid),
+                    robust=True,
+                )
+
+        return std_response(
+            data={"game_id": game_id, "task_id": task_id},
+            # 접수 시점 응답. ZIP 검증·관리자 검수는 이후 단계다.
+            message="검수 요청이 접수되었습니다.", status="success", status_code=status.HTTP_200_OK,
         )
-
-        # 카테고리 하나만 설정
-        game.category.set([category])
-
-        new_game_chip, created = Chip.objects.get_or_create(name="New Game")
-        game.chip.add(new_game_chip)
-
-        # 기본 'NORMAL' 칩 추가
-        normal_chip, _ = Chip.objects.get_or_create(name="NORMAL")
-        game.chip.add(normal_chip)
-
-        # 이후 Screenshot model에 저장
-        for item in screenshots:
-            scrfeenshot=Screenshot.objects.create(src=item, game=game)
-
-        # 게임 등록 로그에 데이터 추가
-        game.logs_game.create(
-            recoder = request.user,
-            maker = request.user,
-            game = game,
-            content = f"검수요청 (기록자: {request.user.email}, 제작자: {request.user.email})",
-        )
-        
-        # 디스코드 알림
-        send_discord_notification(game)
-
-        # 페이지 알림
-        notif = create_notification(
-            user=request.user,
-            noti_type=Notification.NotificationType.GAME_UPLOAD,
-            noti_sub_type=NotificationSubType.REGISTER_REQUEST,
-            related_object=game,
-            game_title=game.title
-        )
-        
-        return std_response(message="게임 등록이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
         #return Response({"message": "게임업로드 성공했습니다"}, status=status.HTTP_200_OK)
 
 
@@ -273,10 +337,13 @@ def game_list_search(request):
         )
 
     # 게임 목록 필터링
-    games = Game.objects.filter(query).distinct().order_by('-created_at')
+    games = with_game_list_optimizations(
+        Game.objects.filter(query).distinct().order_by('-created_at'),
+        request.user,
+    )
 
     # 즐겨찾기 분리
-    favorite_games = []
+    favorite_games = Game.objects.none()
     if request.user.is_authenticated:
         favorite_games = games.filter(likes__user=request.user)
         favorite_cnt=len(favorite_games)
@@ -342,11 +409,14 @@ def category_games_list(request):
         return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
     
     # 해당 카테고리에 속하는 게임 필터링
-    games = Game.objects.filter(
-        category=category,
-        is_visible=True,
-        register_state=1
-    ).order_by('-created_at')  # 최신순 정렬
+    games = with_game_list_optimizations(
+        Game.objects.filter(
+            category=category,
+            is_visible=True,
+            register_state=1,
+        ).order_by('-created_at'),
+        request.user,
+    )
 
     if not games.exists():
         return std_response(message=f"카테고리 '{category_name}'에 맞는 게임이 없습니다.", status="fail", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
@@ -375,15 +445,18 @@ class GameDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
 
-    def get_object(self, game_id):
+    def get_object(self, game_id, user=None):
         #return get_object_or_404(Game, pk=game_id, is_visible=True)
         try:
-            return Game.objects.get(pk=game_id, is_visible=True)
+            return with_game_detail_optimizations(
+                Game.objects.filter(pk=game_id, is_visible=True),
+                user if user is not None else getattr(self.request, "user", None),
+            ).get()
         except Game.DoesNotExist:
             return std_response(message="게임이 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
 
@@ -401,8 +474,7 @@ class GameDetailAPIView(APIView):
         # serializer.data의 리턴값인 ReturnDict는 불변객체이다
         data = serializer.data
 
-        screenshots = Screenshot.objects.filter(game_id=game_id)
-        screenshot_serializer = ScreenshotSerializer(screenshots, many=True)
+        screenshot_serializer = ScreenshotSerializer(game.screenshots.all(), many=True)
 
         categories = game.category.all()
         category_serializer = CategorySerailizer(categories, many=True)
@@ -429,18 +501,25 @@ class GameDetailAPIView(APIView):
             return std_response(message="작성자가 아닙니다.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_403_FORBIDDEN)
             #return Response({"error": "작성자가 아닙니다."}, status=status.HTTP_403_FORBIDDEN)
 
+        # 커밋 후 삭제할 S3 키 (교체된 썸네일 / 제거된 스크린샷)
+        s3_keys_to_delete = []
+
+        # ---------- 검증 및 in-memory 변경 (트랜잭션 이전) ----------
         # 게임 파일 검증 및 변경 처리
-        gamefile = request.FILES.get("gamefile")
-        if game.register_state == 2:
-            if not gamefile:
-                return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-        if gamefile:
-            is_valid, error_msg = validate_zip_file(gamefile)
-            if not is_valid:
+        raw_gamefile = request.data.get("gamefile")
+        file_key = None
+        if raw_gamefile not in (None, ""):
+            file_key, error_msg = assert_gamefile_key(raw_gamefile)
+            if error_msg:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
-                #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        if game.register_state == 2 and not file_key:
+            return std_response(message="수정한 게임 파일을 올려주세요.", status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
+
+        old_gamefile_name = game.gamefile.name if file_key else None
+        if file_key:
             game.register_state = 0
-            game.gamefile = gamefile
+            game.gamefile = file_key
             changes.append("gamefile")
 
         # 썸네일 검증 및 변경 처리
@@ -451,8 +530,9 @@ class GameDetailAPIView(APIView):
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
             if thumbnail != game.thumbnail:
-                # 기존 파일 s3에서 삭제
-                default_storage.delete(game.thumbnail.name)
+                # 기존 썸네일은 커밋 후 삭제하도록 키만 수집
+                if game.thumbnail:
+                    s3_keys_to_delete.append(f"media/{game.thumbnail.name}")
                 # request로 받은 파일로 교체
                 game.thumbnail = thumbnail
                 changes.append("thumbnail")
@@ -473,65 +553,105 @@ class GameDetailAPIView(APIView):
             game.content = content
             changes.append("content")
 
-        game.save()
-
-        # 카테고리 변경 처리 (1개만 허용)
+        # 카테고리 존재 검증 (적용은 트랜잭션 내부)
+        category = None
         category_name = request.data.get("category")
         if category_name:
             try:
                 category = GameCategory.objects.get(name=category_name)
-                if not game.category.filter(pk=category.pk).exists():  # 기존과 다를 경우 변경
-                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
-                    changes.append("category")
             except GameCategory.DoesNotExist:
                 return std_response(message=f"'{category_name}' 카테고리는 존재하지 않습니다.", status="error", error_code="SERVER_FAIL", status_code=status.HTTP_404_NOT_FOUND)
                 #return Response({"message": f"'{category_name}' 카테고리는 존재하지 않습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 기존 스크린샷 유지 또는 삭제
+        # 삭제 대상 스크린샷 조회 (행 삭제는 트랜잭션 내부, S3 삭제는 커밋 후)
         old_screenshots = self.request.data.getlist('old_screenshots', [])
         old_screenshots = [int(pk) for pk in old_screenshots]
-        for item in Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots):
-            default_storage.delete(item.src.name)
-            item.delete()
+        screenshots_to_delete = list(Screenshot.objects.filter(game=game).exclude(pk__in=old_screenshots))
+        for item in screenshots_to_delete:
+            if item.src:
+                s3_keys_to_delete.append(f"media/{item.src.name}")
 
-        # 새로운 스크린샷 업로드
-        # 스크린샷 검증
+        # 새 스크린샷 검증 (업로드/DB 등록은 트랜잭션 내부)
         screenshots = self.request.FILES.getlist("new_screenshots")
         for screenshot in screenshots:
             is_valid, error_msg = validate_image(screenshot)
             if not is_valid:
                 return std_response(message=error_msg, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_400_BAD_REQUEST)
                 #return Response({"error": error_msg}, status=status.HTTP_400_BAD_REQUEST)
-        # 데이터 추가
-        for item in screenshots:
-            screenshot = Screenshot.objects.create(src=item, game=game)
 
-        # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
-        if changes:
-            if "gamefile" in changes:
-                log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            else:
-                log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
-            game.logs_game.create(
-                recoder=request.user,
-                maker=request.user,
-                game=game,
-                content=log_content,
-            )
-        
-        # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
-        if game.register_state == 0:
-            send_discord_notification(game, msg_text=f"📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n")
-            
-            notif = create_notification(
-                user=request.user,
-                noti_type=Notification.NotificationType.GAME_UPLOAD,
-                noti_sub_type=NotificationSubType.REGISTER_REQUEST,
-                related_object=game,
-                game_title=game.title
-            )
-        
-        return std_response(message="게임 수정이 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
+        # ---------- DB 작업 (원자적으로 처리) ----------
+        # F06: 같은 업로드 키의 재사용·동시 제출 차단 (파일 교체 시에만)
+        with gamefile_key_claim(file_key) as key_error:
+            if key_error:
+                return std_response(message=key_error, status="fail", error_code="CLIENT_FAIL", status_code=status.HTTP_409_CONFLICT)
+            with transaction.atomic():
+                game.save()
+
+                # 카테고리 변경 처리 (1개만 허용)
+                if category is not None and not game.category.filter(pk=category.pk).exists():
+                    game.category.set([category])  # 기존 카테고리를 삭제하고 새로운 하나만 설정
+                    changes.append("category")
+
+                # 기존 스크린샷 DB 삭제
+                for item in screenshots_to_delete:
+                    item.delete()
+
+                # 새로운 스크린샷 DB 등록
+                for item in screenshots:
+                    screenshot = Screenshot.objects.create(src=item, game=game)
+
+                # 게임 파일 수정인 경우 게임 등록 로그에 데이터 추가
+                if changes:
+                    if "gamefile" in changes:
+                        log_content = f"수정 후 검수요청: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                    else:
+                        log_content = f"수정: {', '.join(changes)} (기록자: {request.user.email}, 제작자: {request.user.email})"
+                    game.logs_game.create(
+                        recoder=request.user,
+                        maker=request.user,
+                        game=game,
+                        content=log_content,
+                    )
+
+                # register_state 가 0인 경우(검수 대기로 변경) 디스코드 알림, 페이지 알림
+                if game.register_state == 0:
+                    game_id = game.pk
+                    user_id = request.user.pk
+                    game_title = game.title
+                    msg_text = "📢 게임 파일 수정 후 검수 요청이 들어왔습니다! 관리자 계정으로 확인해주세요.\n"
+                    transaction.on_commit(
+                        lambda gid=game_id, msg=msg_text: send_discord_notification_task.delay(gid, msg),
+                        robust=True,
+                    )
+                    transaction.on_commit(
+                        lambda uid=user_id, gid=game_id, title=game_title: notify_game_register_task.delay(uid, gid, title),
+                        robust=True,
+                    )
+
+                task_id = None
+                if file_key:
+                    task_id = zip_validation_task_id(game.id, file_key)
+                    delete_name = old_gamefile_name if old_gamefile_name != file_key else None
+                    transaction.on_commit(
+                        lambda name=delete_name, gid=game.id, key=file_key, tid=task_id: _on_gamefile_committed(name, gid, key, tid),
+                        robust=True,
+                    )
+
+        # ---------- 외부 I/O (트랜잭션 커밋 후) ----------
+        # 교체/삭제된 파일 S3에서 제거 (재시도·배치). 실패해도 DB는 이미 커밋되어 안전
+        if s3_keys_to_delete:
+            try:
+                s3 = get_s3_client()
+                safe_s3_delete(s3, AWS_S3_BUCKET_NAME, s3_keys_to_delete)
+            except Exception as e:
+                logger.error(f"game {game.pk}: S3 파일 삭제 실패: {e}", exc_info=True)
+
+        # 파일 유지 수정은 새 검증 작업이 없으므로 task_id를 내려주지 않는다.
+        return std_response(
+            data={"game_id": game.pk, "task_id": task_id},
+            message="검수 요청이 접수되었습니다." if task_id else "게임 수정이 완료되었습니다.",
+            status="success", status_code=status.HTTP_200_OK,
+        )
         #return Response({"message": "수정이 완료됐습니다"}, status=status.HTTP_200_OK)
 
     """
@@ -544,16 +664,18 @@ class GameDetailAPIView(APIView):
             return game
         # 작성한 유저이거나 관리자일 경우 동작함
         if game.maker == request.user or request.user.is_staff == True:
-            game.is_visible = False
-            game.save()
-            
-            # 게임 삭제 시 게임 등록 로그에 데이터 추가
-            game.logs_game.create(
-                recoder = request.user,
-                maker = request.user,
-                game = game,
-                content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
-            )
+            # 소프트 삭제 + 로그 기록을 원자적으로 처리
+            with transaction.atomic():
+                game.is_visible = False
+                game.save()
+
+                # 게임 삭제 시 게임 등록 로그에 데이터 추가
+                game.logs_game.create(
+                    recoder = request.user,
+                    maker = request.user,
+                    game = game,
+                    content = f"삭제 (기록자: {request.user.email}, 제작자: {request.user.email})",
+                )
             return std_response(message="게임 삭제가 완료되었습니다.", status="success", status_code=status.HTTP_200_OK)
             # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
         else:
@@ -655,7 +777,10 @@ class ReviewAPIView(APIView):
         order = request.query_params.get('order', 'new')  # 기본값 'new'
 
         # 모든 리뷰 가져오기
-        reviews = Review.objects.filter(game=game_id, is_visible=True)
+        reviews = with_review_optimizations(
+            Review.objects.filter(game=game_id, is_visible=True),
+            request.user,
+        )
 
         # 로그인 상태에서 내 리뷰 추출
         my_review = None
@@ -782,13 +907,15 @@ class ReviewAPIView(APIView):
             )
         game.star = game.star + ((star - game.star) / (game.review_cnt + 1))
         game.review_cnt = game.review_cnt + 1
-        game.save()
 
         serializer = ReviewSerializer(
             data=request.data, context={'user': request.user})
         if serializer.is_valid(raise_exception=True):
-            serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
-            assign_chip_based_on_difficulty(game)
+            # 별점 갱신 + 리뷰 저장 + 칩 재계산을 원자적으로 처리
+            with transaction.atomic():
+                game.save()
+                serializer.save(author=request.user, game=game)  # 데이터베이스에 저장
+                assign_chip_based_on_difficulty(game)
             # return Response(serializer.data, status=status.HTTP_201_CREATED)
             return std_response(
                 data=serializer.data,
@@ -809,7 +936,7 @@ class ReviewDetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -817,7 +944,10 @@ class ReviewDetailAPIView(APIView):
     def get(self, request, review_id):
         try:
         # 리뷰가 존재하고, is_visible이 True인 경우만 가져옴
-            review = Review.objects.get(pk=review_id, is_visible=True)
+            review = with_review_optimizations(
+                Review.objects.filter(pk=review_id, is_visible=True),
+                request.user,
+            ).get()
         except Review.DoesNotExist:
             # 리뷰가 존재하지 않으면 404 응답과 함께 메시지 반환
             # return Response({"message": "상세 평가 기록이 없습니다."}, status=status.HTTP_404_NOT_FOUND)
@@ -873,12 +1003,14 @@ class ReviewDetailAPIView(APIView):
                     error_code="CLIENT_FAIL"
                     )
             game.star = game.star + ((star - request.data.get('pre_star')) / (game.review_cnt))
-            game.save()
             serializer = ReviewSerializer(
                 review, data=request.data, partial=True, context={'user': request.user})
             if serializer.is_valid(raise_exception=True):
-                serializer.save()
-                assign_chip_based_on_difficulty(review.game)
+                # 별점 갱신 + 리뷰 수정 + 칩 재계산을 원자적으로 처리
+                with transaction.atomic():
+                    game.save()
+                    serializer.save()
+                    assign_chip_based_on_difficulty(review.game)
                 # return Response(serializer.data, status=status.HTTP_200_OK)
                 return std_response(
                     data=serializer.data,
@@ -937,10 +1069,12 @@ class ReviewDetailAPIView(APIView):
             else:
                 game.star = 0
             game.review_cnt = game.review_cnt-1
-            game.save()
-            review.is_visible = False
-            review.save()
-            assign_chip_based_on_difficulty(review.game)
+            # 별점/리뷰수 갱신 + 리뷰 소프트삭제 + 칩 재계산을 원자적으로 처리
+            with transaction.atomic():
+                game.save()
+                review.is_visible = False
+                review.save()
+                assign_chip_based_on_difficulty(review.game)
             # return Response({"message": "삭제를 완료했습니다"}, status=status.HTTP_200_OK)
             return std_response(
                 message="삭제를 완료했습니다",
@@ -976,27 +1110,29 @@ def toggle_review_like(request, review_id):
             status_code=status.HTTP_404_NOT_FOUND,
             error_code="SERVER_FAIL"
         )
-    # ReviewsLike 객체를 가져오거나 새로 생성
-    # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
-    review_like, _ = ReviewsLike.objects.get_or_create(
-        user=user, review=review)
+    # 좋아요/싫어요 상태 조회·생성·저장을 원자적으로 처리
+    with transaction.atomic():
+        # ReviewsLike 객체를 가져오거나 새로 생성
+        # get_or_create 리턴: review_like - ReviewsLike 객체(행), _ - 행 생성 여부
+        review_like, _ = ReviewsLike.objects.get_or_create(
+            user=user, review=review)
 
-    # 요청에서 받은 'action'에 따라 상태 변경
-    action = request.data.get('action', None)
-    if action == 'like':
-        if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
-            review_like.is_like = 1
-        else:
-            # 이미 'like' 상태일 경우 'no state'로 전환
-            review_like.is_like = 0
-    elif action == 'dislike':
-        if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
-            review_like.is_like = 2
-        else:
-            # 이미 'dislike' 상태일 경우 'no state'로 전환
-            review_like.is_like = 0
+        # 요청에서 받은 'action'에 따라 상태 변경
+        action = request.data.get('action', None)
+        if action == 'like':
+            if review_like.is_like != 1:  # 현재 상태가 'like'가 아니면 'like'로 변경
+                review_like.is_like = 1
+            else:
+                # 이미 'like' 상태일 경우 'no state'로 전환
+                review_like.is_like = 0
+        elif action == 'dislike':
+            if review_like.is_like != 2:  # 현재 상태가 'dislike'가 아니면 'dislike'로 변경
+                review_like.is_like = 2
+            else:
+                # 이미 'dislike' 상태일 경우 'no state'로 전환
+                review_like.is_like = 0
 
-    review_like.save()  # 변경 사항 저장
+        review_like.save()  # 변경 사항 저장
     # return Response({"message": f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다."}, status=status.HTTP_200_OK)
     return std_response(
         message=f"리뷰(id: {review_id})에 {review_like.is_like} 동작을 수행했습니다.",
@@ -1009,7 +1145,7 @@ class CategoryAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('post' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('post', 'delete'):  # 생성/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -1083,34 +1219,26 @@ class GamePlaytimeAPIView(APIView):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 error_code="CLIENT_FAIL"
             )
-        if Game.objects.filter(pk=game_id, is_visible=True).exists():
-            try:
-                game = Game.objects.get(pk=game_id, is_visible=True)
-            except:
-                return std_response(
-                    message="게임이 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
-            playtime = PlayLog.objects.create(
-                user=request.user,
-                game=game,
-                start_at=timezone.now()  # 현재 시간으로 start_time
-            )
-            playtime_id = playtime.pk
-            # return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
-            return std_response(
-                data={
-                    "playtime_id":playtime_id
-                },
-                message="게임 플레이 시작시간 기록을 성공했습니다.",
-                status="success",
-                status_code=status.HTTP_200_OK
-            )
-        else:
-            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+        try:
+            game = Game.objects.get(pk=game_id, is_visible=True)
+        except Game.DoesNotExist:
+            return std_response(message="게임이 존재하지 않습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+
+        playtime = PlayLog.objects.create(
+            user=request.user,
+            game=game,
+            start_at=timezone.now()  # 현재 시간으로 start_time
+        )
+        playtime_id = playtime.pk
+        # return Response({"message": "게임 플레이 시작시간 기록을 성공했습니다.", "playtime_id":playtime_id}, status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                "playtime_id":playtime_id
+            },
+            message="게임 플레이 시작시간 기록을 성공했습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
     def post(self, request, game_id):
         # 로그인 여부 확인
@@ -1122,27 +1250,23 @@ class GamePlaytimeAPIView(APIView):
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 error_code="CLIENT_FAIL"
             )
-        if Game.objects.filter(pk=game_id, is_visible=True).exists():
-            # game=get_object_or_404(Game, pk=game_id, is_visible=True)
-            try:
-                game = Game.objects.get(pk=game_id, is_visible=True)
-            except:
-                return std_response(
-                    message="게임이 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
-            # playlog = get_object_or_404(PlayLog, pk=request.data.get("playtime_id"))
-            try:
-                playlog = PlayLog.objects.get(pk=request.data.get("playtime_id"))
-            except:
-                return std_response(
-                    message="로그가 존재하지 않습니다.",
-                    status="error",
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    error_code="SERVER_FAIL"
-                    )
+        try:
+            game = Game.objects.get(pk=game_id, is_visible=True)
+        except Game.DoesNotExist:
+            return std_response(message="게임이 존재하지 않습니다.", status="fail", status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+
+        try:
+            playlog = PlayLog.objects.get(pk=request.data.get("playtime_id"))
+        except PlayLog.DoesNotExist:
+            return std_response(
+                message="로그가 존재하지 않습니다.",
+                status="error",
+                status_code=status.HTTP_404_NOT_FOUND,
+                error_code="SERVER_FAIL"
+                )
+
+        # 플레이로그 종료 기록 + 누적 플레이타임 갱신을 원자적으로 처리
+        with transaction.atomic():
             totalplaytime,_ = TotalPlayTime.objects.get_or_create(user=request.user, game=game)
 
             playlog.end_at = timezone.now()  # 현재 시간으로 end_time
@@ -1154,26 +1278,23 @@ class GamePlaytimeAPIView(APIView):
 
             playlog.save()
             totalplaytime.save()
-            # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
-            #                 "start_time":playlog.start_at,
-            #                 "end_time":playlog.end_at,
-            #                 "playtime": playlog.playtime,
-            #                 "totalplaytime":totalplaytime.totaltime}
-            #                 , status=status.HTTP_200_OK)
-            return std_response(
-                data={
-                    "start_time":playlog.start_at,
-                    "end_time":playlog.end_at,
-                    "playtime": playlog.playtime,
-                    "totalplaytime":totalplaytime.totaltime
-                },
-                message="게임 플레이 종료시간 기록을 성공했습니다.",
-                status="success",
-                status_code=status.HTTP_200_OK
-            )
-        else:
-            # return Response({"error": "게임이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
-            return std_response(message="게임이 존재하지 않습니다.",status="fail",  status_code=status.HTTP_404_NOT_FOUND, error_code="SERVER_FAIL")
+        # return Response({"message": "게임 플레이 종료시간 기록을 성공했습니다.", 
+        #                 "start_time":playlog.start_at,
+        #                 "end_time":playlog.end_at,
+        #                 "playtime": playlog.playtime,
+        #                 "totalplaytime":totalplaytime.totaltime}
+        #                 , status=status.HTTP_200_OK)
+        return std_response(
+            data={
+                "start_time":playlog.start_at,
+                "end_time":playlog.end_at,
+                "playtime": playlog.playtime,
+                "totalplaytime":totalplaytime.totaltime
+            },
+            message="게임 플레이 종료시간 기록을 성공했습니다.",
+            status="success",
+            status_code=status.HTTP_200_OK
+        )
 
 
 CLIENT = OpenAI(api_key=settings.OPEN_API_KEY)

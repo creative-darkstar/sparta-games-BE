@@ -1,10 +1,6 @@
 from datetime import datetime
 import os
-import re
 import uuid
-
-import boto3
-from bs4 import BeautifulSoup
 
 from django.conf import settings
 from django.core.files.storage import default_storage, FileSystemStorage
@@ -22,8 +18,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 
-from spartagames.utils import std_response
-from spartagames.config import AWS_AUTH, AWS_S3_BUCKET_NAME, AWS_S3_REGION_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
+from spartagames.utils import std_response, get_s3_client
+from spartagames.config import AWS_S3_BUCKET_NAME, AWS_S3_CUSTOM_DOMAIN, AWS_S3_BUCKET_IMAGES
 
 from .models import Notification
 from .pagination import NotificationPagination
@@ -31,40 +27,98 @@ from .serializers import NotificationSerializer
 
 
 # 업로드 용 presigned url 발급
-def generate_presigned_url_for_upload(base_path, extension):
+def generate_presigned_url_for_upload(base_path, extension, filename=None):
     if extension in ['jpeg', 'png', 'gif']:
         file_type = "image"
-    else:
+        s3 = get_s3_client()
+        time_data = timezone.now().strftime("%Y%m%d%H%M%S%f")
+        object_key = f'{base_path}/{time_data}_{uuid.uuid4()}.{extension}'
+
+        presigned_url = s3.generate_presigned_url(
+            ClientMethod='put_object',
+            Params={
+                'Bucket': AWS_S3_BUCKET_NAME,
+                'Key': object_key,
+                'ContentType': f'{file_type}/*',
+                'Tagging': 'is_used=false',
+                # 'ACL': 'public-read'  # presigned로 public 업로드 허용
+            },
+            ExpiresIn=600,  # 10분간 유효
+        )
+
+        real_url = f'https://{AWS_S3_CUSTOM_DOMAIN}/{object_key}'
+        return presigned_url, real_url
+
+    if extension != 'zip':
         return std_response(
-            message="지원하는 확장자가 아닙니다. 'jpeg', 'png', 'gif' 중에 해당되는 파일을 올려주십시오.",
+            message="지원하는 확장자가 아닙니다. 'jpeg', 'png', 'gif', 'zip' 중에 해당되는 파일을 올려주십시오.",
             status="fail",
             error_code="CLIENT_FAIL",
             status_code=status.HTTP_400_BAD_REQUEST
         )
-    
-    s3 = boto3.client(
-        's3',
-        aws_access_key_id=AWS_AUTH["aws_access_key_id"],
-        aws_secret_access_key=AWS_AUTH["aws_secret_access_key"],
-        region_name=AWS_S3_REGION_NAME,
-    )
-    time_data = timezone.now().strftime("%Y%m%d%H%M%S%f")
-    object_key = f'{base_path}/{time_data}_{uuid.uuid4()}.{extension}'
-    
+
+    if base_path not in ('zips', 'media/zips'):
+        return std_response(
+            message="zip 업로드의 base_path는 'zips' 여야 합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not filename or not isinstance(filename, str):
+        return std_response(
+            message="원본 파일명(filename)이 필요합니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    sanitized_filename = filename.strip()
+    if (
+        not sanitized_filename
+        or sanitized_filename != os.path.basename(sanitized_filename)
+        or '/' in sanitized_filename
+        or '\\' in sanitized_filename
+        or '..' in sanitized_filename
+    ):
+        return std_response(
+            message="파일명에 경로 구분자가 포함될 수 없습니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    if os.path.splitext(sanitized_filename)[-1].lower() != '.zip':
+        return std_response(
+            message="zip 파일명만 허용됩니다.",
+            status="fail",
+            error_code="CLIENT_FAIL",
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
+
+    # 순환 import 방지: 발급 시점에만 Game.upload_to_func 사용
+    from games.models import Game
+
+    file_key = Game.upload_to_func(None, sanitized_filename)
+    object_key = "media/" + file_key
+    s3 = get_s3_client()
+
     presigned_url = s3.generate_presigned_url(
         ClientMethod='put_object',
         Params={
             'Bucket': AWS_S3_BUCKET_NAME,
             'Key': object_key,
-            'ContentType': f'{file_type}/*',
+            'ContentType': 'application/zip',
             'Tagging': 'is_used=false',
-            # 'ACL': 'public-read'  # presigned로 public 업로드 허용
+            # F06: 객체가 이미 있으면 S3가 412로 거부 → 검증 후 같은 URL로 파일 바꿔치기 차단.
+            # 서명된 헤더이므로 클라이언트는 If-None-Match: * 를 반드시 보내야 한다.
+            'IfNoneMatch': '*',
         },
-        ExpiresIn=600,  # 10분간 유효
+        ExpiresIn=1800,
     )
-    
+
     real_url = f'https://{AWS_S3_CUSTOM_DOMAIN}/{object_key}'
-    return presigned_url, real_url
+    return presigned_url, real_url, object_key, file_key
 
 
 # 업로드 용 presigned url 응답
@@ -74,12 +128,26 @@ class S3UploadPresignedUrlView(APIView):
     def post(self, request):
         base_path = request.data.get("base_path")
         extension = request.data.get('extension')
+        filename = request.data.get('filename')
 
-        res = generate_presigned_url_for_upload(base_path, extension)
+        res = generate_presigned_url_for_upload(base_path, extension, filename)
         if isinstance(res, Response):
             return res
+
+        if len(res) == 4:
+            presigned_url, real_url, object_key, file_key = res
+            return std_response(
+                status="success",
+                data={
+                    'upload_url': presigned_url,
+                    'url': real_url,
+                    'object_key': object_key,
+                    'file_key': file_key,
+                },
+                status_code=status.HTTP_200_OK
+            )
+
         presigned_url, real_url = res
-        
         return std_response(
             status="success",
             data={
@@ -108,19 +176,6 @@ class LocalImageUploadView(APIView):
         image_url = os.path.join(settings.MEDIA_URL, saved_path)
         full_url = request.build_absolute_uri(image_url)
         return Response({'url': full_url})
-
-
-def extract_content_text(content):
-    raw_text = BeautifulSoup(content or "", "html.parser").get_text()
-    
-    # 이스케이프 문자 -> 공백으로 치환
-    clean_text = raw_text.replace('\xa0', ' ')
-    clean_text = re.sub(r'[\n\r\t]+', ' ', clean_text)
-    
-    # 여러 공백 -> 단일 공백
-    clean_text = re.sub(r'\s+', ' ', clean_text)
-    
-    return clean_text.strip()
 
 
 class NotificationListView(APIView):

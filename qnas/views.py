@@ -21,6 +21,7 @@ from .models import (
 from .pagination import (
     GameRegisterListPagination,
 )
+from .querysets import with_game_register_list_optimizations
 from .serializers import (
     QnAPostListSerializer,
     CategorySerializer,
@@ -93,7 +94,7 @@ class QnADetailAPIView(APIView):
     def get_permissions(self):  # 로그인 인증토큰
         permissions = super().get_permissions()
 
-        if self.request.method.lower() == ('put' or 'delete'):  # 포스트할때만 로그인
+        if self.request.method.lower() in ('put', 'delete'):  # 수정/삭제 시 로그인 필요
             permissions.append(IsAuthenticated())
 
         return permissions
@@ -206,7 +207,7 @@ def game_register_list(request):
     if keyword_q:
         query &= Q(title__icontains=keyword_q) | Q(maker__nickname__icontains=keyword_q)
     
-    rows = Game.objects.filter(query).distinct()
+    rows = with_game_register_list_optimizations(Game.objects.filter(query).distinct())
 
     # 페이지네이션
     paginator = GameRegisterListPagination()
@@ -471,15 +472,60 @@ def game_register_v2(request, game_id):
 
 from celery.result import AsyncResult
 
+from games.utils import is_zip_result_expired, zip_validation_task_id
+
+
 @api_view(["GET"])
 def get_task_status(request, task_id):
-    result = AsyncResult(task_id)
+    """
+    Celery task 상태 조회.
+    - ?game_id= 없음: 관리자 공개 처리 작업 조회. 관리자만 허용 (기존 응답 형식 유지)
+    - ?game_id= 있음: ZIP 검증 작업 조회. 제작자·관리자만, 현재 파일의 task_id와 일치해야 함
+    완료를 기다리지 않으며(AsyncResult.get 미사용) 실패 시 예외 원문을 내보내지 않는다.
+    """
+    task_id = str(task_id)
+    if not request.user.is_authenticated:
+        return std_response(message="로그인이 필요합니다.", status="fail", error_code="CLIENT_FAIL",
+                            status_code=status.HTTP_401_UNAUTHORIZED)
 
-    return Response({
+    game_id = request.query_params.get("game_id")
+    if game_id is None:
+        if not request.user.is_staff:
+            return std_response(message="관리자 권한이 필요합니다.", status="fail", error_code="CLIENT_FAIL",
+                                status_code=status.HTTP_403_FORBIDDEN)
+        result = AsyncResult(task_id)
+        return Response({
+            "task_id": task_id,
+            "status": result.status,  # PENDING, STARTED, SUCCESS, FAILURE
+            "result": result.result if result.successful() else None,
+        })
+
+    try:
+        game = Game.objects.get(pk=int(game_id), is_visible=True)
+    except (ValueError, Game.DoesNotExist):
+        return std_response(message="게임이 존재하지 않습니다.", status="fail", error_code="CLIENT_FAIL",
+                            status_code=status.HTTP_404_NOT_FOUND)
+    if game.maker_id != request.user.id and not request.user.is_staff:
+        return std_response(message="조회 권한이 없습니다.", status="fail", error_code="CLIENT_FAIL",
+                            status_code=status.HTTP_403_FORBIDDEN)
+    if not game.gamefile or zip_validation_task_id(game.id, game.gamefile.name) != task_id:
+        return std_response(message="현재 제출된 파일의 작업이 아닙니다.", status="fail", error_code="CLIENT_FAIL",
+                            status_code=status.HTTP_409_CONFLICT)
+
+    result = AsyncResult(task_id)
+    data = {
         "task_id": task_id,
-        "status": result.status,  # PENDING, STARTED, SUCCESS, FAILURE
+        "status": result.status,
         "result": result.result if result.successful() else None,
-    })
+        "lookup_status": "ok",
+    }
+    # PENDING은 알 수 없는 ID에도 반환된다. 보관기간이 지난 제출이면 만료로 구분한다.
+    if result.status == "PENDING" and is_zip_result_expired(game.gamefile.name):
+        data["lookup_status"] = "expired"
+    if result.status == "FAILURE":
+        data["error_code"] = "VALIDATION_ERROR"
+        data["message"] = "파일 검증을 처리하지 못했습니다."
+    return Response(data)
 
 
 @api_view(['POST'])

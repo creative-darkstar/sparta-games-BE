@@ -1,9 +1,25 @@
-from asgiref.sync import async_to_sync
-from channels.layers import get_channel_layer
+import re
 from enum import Enum
+
+from asgiref.sync import async_to_sync
+from bs4 import BeautifulSoup
+from channels.layers import get_channel_layer
 
 from django.contrib.contenttypes.models import ContentType
 from .models import Notification
+
+
+def extract_content_text(content):
+    raw_text = BeautifulSoup(content or "", "html.parser").get_text()
+
+    # 이스케이프 문자 -> 공백으로 치환
+    clean_text = raw_text.replace('\xa0', ' ')
+    clean_text = re.sub(r'[\n\r\t]+', ' ', clean_text)
+
+    # 여러 공백 -> 단일 공백
+    clean_text = re.sub(r'\s+', ' ', clean_text)
+
+    return clean_text.strip()
 
 
 # class NOTI_MESSAGE_TEMPLATES(str, Enum):

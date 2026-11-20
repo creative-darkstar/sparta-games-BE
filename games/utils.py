@@ -1,15 +1,24 @@
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone as dt_timezone
+from urllib.parse import urlparse
+import logging
 from PIL import Image
 import os
 import re
-import requests
 import stat
+import uuid
 import zipfile
 
+import redis
+from django.conf import settings
+
+from botocore.exceptions import ClientError
+from django.core.files.uploadedfile import UploadedFile
 from django.db.models import Avg
 from .models import Chip
 
-from spartagames.config import DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
-from spartagames.exceptions import DiscordAlertException
+from spartagames.config import AWS_S3_BUCKET_NAME
+from spartagames.utils import get_s3_client
 
 
 # zip bomb 체크용 최대 허용 압축률 (총 압축 해제된 파일들 용량 / 총 압축된 파일들 용량)
@@ -87,6 +96,119 @@ def _is_symlink(info: zipfile.ZipInfo) -> bool:
         return stat.S_ISLNK(mode)
     else:
         return False
+
+
+GAMEFILE_KEY_RE = re.compile(r'^zips/[^/\\]+\.zip$')
+
+
+# ZIP 검증 task_id 계산용 네임스페이스. 값을 바꾸면 기존 task_id를 다시 계산할 수 없으므로 고정한다.
+ZIP_TASK_NAMESPACE = uuid.UUID("ded0a6c0-0c7a-4345-99aa-a43e1743df2f")
+
+# ZIP 검증 결과 조회 보장 기간 (settings.CELERY_RESULT_EXPIRES와 같은 값)
+ZIP_RESULT_RETENTION = timedelta(days=7)
+
+GAMEFILE_KEY_TIME_RE = re.compile(r'^zips/(\d{20})_')
+
+
+def zip_validation_task_id(game_id, file_key):
+    """
+    게임 ID + 파일 키로 ZIP 검증 task_id를 계산한다.
+    별도 저장 없이 현재 DB의 game.gamefile.name만으로 같은 ID를 다시 얻을 수 있다.
+    """
+    return str(uuid.uuid5(ZIP_TASK_NAMESPACE, f"game_zip:{game_id}:{file_key}"))
+
+
+def zip_submitted_at(file_key):
+    """파일 키에 들어 있는 presign 발급 시각(UTC). 형식이 다르면 None."""
+    match = GAMEFILE_KEY_TIME_RE.match(file_key or "")
+    if not match:
+        return None
+    return datetime.strptime(match.group(1), "%Y%m%d%H%M%S%f").replace(tzinfo=dt_timezone.utc)
+
+
+def is_zip_result_expired(file_key, now=None):
+    submitted_at = zip_submitted_at(file_key)
+    if submitted_at is None:
+        return False
+    now = now or datetime.now(dt_timezone.utc)
+    return now - submitted_at > ZIP_RESULT_RETENTION
+
+
+logger = logging.getLogger("sparta_games")
+
+GAMEFILE_KEY_LOCK_SECONDS = 60
+GAMEFILE_KEY_USED_MESSAGE = "이미 사용된 업로드 파일입니다. 파일을 다시 선택해주세요."
+
+
+def _redis_client():
+    url = urlparse(settings.CELERY_BROKER_URL)
+    return redis.Redis(host=url.hostname, port=url.port, password=url.password, db=0)
+
+
+@contextmanager
+def gamefile_key_claim(file_key):
+    """
+    F06: 업로드 키 재사용 차단. 블록 안에서 게임 생성·교체를 커밋한다.
+    yield 값이 None이면 사용 가능, 문자열이면 409로 돌려줄 메시지다.
+    - 요청 처리 동안만 Redis 단기 잠금(SET NX EX)으로 같은 키의 동시 요청을 막는다. 영구 매핑이 아니다.
+    - 이미 어떤 Game(삭제 처리 포함)이 쓰는 키면 거부한다.
+    - Redis 장애 시에는 잠금 없이 DB 확인만 수행한다(로그 기록).
+    """
+    if not file_key:
+        yield None
+        return
+
+    lock_key = f"upload_key_lock:{file_key}"
+    client = None
+    try:
+        client = _redis_client()
+        if not client.set(lock_key, "1", nx=True, ex=GAMEFILE_KEY_LOCK_SECONDS):
+            yield GAMEFILE_KEY_USED_MESSAGE
+            return
+    except redis.RedisError:
+        logger.warning(f"gamefile_key_claim: Redis lock unavailable for {file_key}", exc_info=True)
+        client = None
+
+    try:
+        from .models import Game  # 순환 import 방지
+        if Game.objects.filter(gamefile=file_key).exists():
+            yield GAMEFILE_KEY_USED_MESSAGE
+        else:
+            yield None
+    finally:
+        if client is not None:
+            try:
+                client.delete(lock_key)
+            except redis.RedisError:
+                logger.warning(f"gamefile_key_claim: failed to release lock for {file_key}", exc_info=True)
+
+
+def assert_gamefile_key(file_key):
+    """
+    클라이언트가 제출한 gamefile 문자열이 우리 버킷의 media/zips/ 객체인지 확인한다.
+    성공 시 (normalized_key, None), 실패 시 (None, error_message).
+    """
+    if isinstance(file_key, UploadedFile) or not isinstance(file_key, str):
+        return None, "gamefile는 파일 키 문자열이어야 합니다."
+
+    file_key = file_key.strip()
+    if not file_key:
+        return None, "gamefile는 필수입니다."
+
+    if '..' in file_key or '\\' in file_key or not GAMEFILE_KEY_RE.fullmatch(file_key):
+        return None, "gamefile 형식이 올바르지 않습니다."
+
+    s3 = get_s3_client()
+    object_key = f"media/{file_key}"
+    try:
+        s3.head_object(Bucket=AWS_S3_BUCKET_NAME, Key=object_key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("404", "403", "NoSuchKey", "NotFound"):
+            return None, "업로드된 게임 파일을 찾을 수 없습니다."
+        return None, "게임 파일을 확인하는 중 오류가 발생했습니다."
+
+    return file_key, None
 
 
 def validate_zip_file(zip_file, max_size=500 * 1024 * 1024):
@@ -211,25 +333,3 @@ def assign_chip_based_on_difficulty(game):
         game.chip.add(hard_chip)
     else:
         game.chip.add(normal_chip)
-
-
-def send_discord_notification(game, msg_text="📢 새로운 게임이 업로드되었습니다! 관리자 계정으로 확인해주세요.\n"):
-    webhook_url = DISCORD_GAME_UPLOAD_CHANNEL_WEBHOOK_URL
-
-    message = {
-        "content": f"""
-{msg_text}
-🎮 게임명: {game.title}\n"
-👤 업로더: {game.maker.nickname}\n
-"""
-    }
-
-    try:
-        resp = requests.post(webhook_url, json=message)
-        # resp.raise_for_status()
-    except Exception as e:
-        # logger 도입하는대로 해당 코드 라인은 살릴 예정
-        # 지금은 print 처리
-        # raise DiscordAlertException
-        # 실패 시 로깅 처리
-        print(f"Discord 알림 실패: {e}")
