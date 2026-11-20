@@ -11,3 +11,13 @@ coverage
 # --- env (이미 CI/런타임에서 주입)
 .env
 .env.*
+# --- 로컬/서버 가상환경, 캐시, 로그, 로컬 DB (이미지에 포함하지 않음)
+venv
+.venv
+env
+**/__pycache__
+logs
+db.sqlite3
+server_test
+docker-compose*.yml
+nginx-be.conf

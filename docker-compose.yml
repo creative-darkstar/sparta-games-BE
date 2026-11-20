@@ -1,56 +1,53 @@
+# 운영(배포) 서버용 compose 파일
+# - 로컬/개발 환경은 docker-compose.dev.yml 사용: docker compose -f docker-compose.dev.yml up -d
+# - 서버에 필요한 파일(git 미포함): spartagames/config.py, nginx-be.conf
+
+x-logging: &default-logging
+  # 컨테이너 표준출력 로그가 디스크를 채우지 않도록 크기 제한
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app: &app
+  # 백엔드/celery 가 같은 이미지를 공유 (빌드는 spartagames-be 에서 한 번만)
+  image: spartagames-be:latest
+  restart: always
+  environment:
+    REDIS_HOST: redis
+    REDIS_PORT: "6379"
+    LOG_DIR: /usr/src/app/logs
+  volumes:
+    # Django 파일 로그를 호스트(프로젝트 폴더/logs)에 보존
+    - ./logs:/usr/src/app/logs
+  depends_on:
+    - redis
+  networks:
+    - spartagames-net
+  logging: *default-logging
+
 services:
   redis:
     image: redis:6-alpine
     container_name: sparta-redis
-    ports:
-      - "6379:6379"
+    # 외부 포트 공개 안 함 (컨테이너끼리는 spartagames-net 으로 통신)
     restart: unless-stopped
     networks:
       - spartagames-net
+    logging: *default-logging
 
   spartagames-be:
+    <<: *app
     build: .
     command: daphne -b 0.0.0.0 -p 8000 spartagames.asgi:application
-    # deploy:
-    #   replicas: 3
-    restart: always
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-    depends_on:
-      - redis
-    volumes:
-    - ./db.sqlite3:/usr/src/app/db.sqlite3
-    networks:
-      - spartagames-net
 
   celery-worker:
-    build: .
+    <<: *app
     command: celery -A spartagames worker --loglevel=info
-    restart: always
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-    depends_on:
-      - redis
-    volumes:
-      - ./db.sqlite3:/usr/src/app/db.sqlite3
-    networks:
-      - spartagames-net
 
   celery-beat:
-    build: .
+    <<: *app
     command: celery -A spartagames beat --loglevel=info
-    restart: always
-    environment:
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-    depends_on:
-      - redis
-    volumes:
-      - ./db.sqlite3:/usr/src/app/db.sqlite3
-    networks:
-      - spartagames-net
 
   proxy-be:
     image: nginx:1.21.5-alpine
@@ -59,11 +56,13 @@ services:
     depends_on:
       - spartagames-be
     ports:
-      - '8000:80'
+      # 서버 내부(호스트 nginx)에서만 접근 가능하도록 127.0.0.1 에만 바인딩
+      - "127.0.0.1:8000:80"
     volumes:
-      - ./nginx-be.conf:/etc/nginx/nginx.conf
+      - ./nginx-be.conf:/etc/nginx/nginx.conf:ro
     networks:
       - spartagames-net
+    logging: *default-logging
 
 networks:
   spartagames-net:

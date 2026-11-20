@@ -328,6 +328,10 @@ ACCOUNT_EMAIL_REQUIRED = True  # 이메일을 필수로 요구
 ACCOUNT_USERNAME_REQUIRED = False  # username 필드를 사용하지 않음
 ACCOUNT_AUTHENTICATION_METHOD = 'email'  # 이메일을 로그인에 사용
 
+# 로그 파일 위치: Docker 운영 환경에서는 LOG_DIR(볼륨 마운트 경로) 주입, 그 외에는 기존처럼 BASE_DIR
+LOG_DIR = Path(os.getenv("LOG_DIR", BASE_DIR))
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -349,7 +353,7 @@ LOGGING = {
         'info_level_log_file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'spartagames_BE_info_level.log',
+            'filename': LOG_DIR / 'spartagames_BE_info_level.log',
             "filters": ["request_context"],
             "formatter": "verbose",
             "encoding": "utf-8",
@@ -357,7 +361,7 @@ LOGGING = {
         'celery_log_file': {
             'level': 'INFO',
             'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'spartagames_BE_celery.log',
+            'filename': LOG_DIR / 'spartagames_BE_celery.log',
             "filters": ["request_context"],
             "formatter": "verbose",
             "encoding": "utf-8",

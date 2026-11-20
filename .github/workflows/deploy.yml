@@ -1,66 +1,33 @@
 name: CD Pipeline
 
+# 배포 시점
+# - dev -> main PR 이 "merge 되었을 때" 한 번만 배포 (PR 열기/커밋 추가 시에는 실행 안 함)
+# - Actions 탭의 "Run workflow" 버튼으로 수동 배포 (main 직접 커밋 후 배포할 때 사용)
 on:
   pull_request:
+    types: [closed]
     branches:
       - main
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+
+# 배포가 겹쳐서 실행되지 않도록 순서대로 하나씩 실행
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 jobs:
-  # 나중에 쓸 수 있음
-  # ci:
-  #   name: Run CI (PR only)
-  #   if: github.event_name == 'pull_request'
-  #   runs-on: ubuntu-latest
-
-  #   steps:
-  #   - name: Checkout code
-  #     uses: actions/checkout@v3
-
-  #   - name: Set up Python
-  #     uses: actions/setup-python@v4
-  #     with:
-  #       python-version: '3.10.12'
-
-  #   - name: Install dependencies
-  #     run: |
-  #       python -m venv venv
-  #       source venv/bin/activate
-  #       pip install --upgrade pip
-  #       pip install -r requirements.txt
-  #       pip install flake8 black
-
-  #   - name: Check black formatting
-  #     run: |
-  #       source venv/bin/activate
-  #       black --check .
-
-  #   - name: Run flake8 linter
-  #     run: |
-  #       source venv/bin/activate
-  #       flake8 .
-
-  #   - name: Check for missing migrations
-  #     run: |
-  #       source venv/bin/activate
-  #       python manage.py makemigrations --check --dry-run
-
   cd:
-    name: Deploy to EC2 (push main + PR to main)
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+    name: Deploy to EC2 (Docker Compose)
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
       (
-        github.event_name == 'pull_request'
-        && github.base_ref == 'main'
+        github.event.pull_request.merged == true
         && github.event.pull_request.head.repo.full_name == github.repository
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
     - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
@@ -70,25 +37,45 @@ jobs:
 
     - name: Deploy to EC2
       run: |
-        ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << EOF
+        ssh ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'bash -s' << 'EOF'
+          set -euo pipefail
+
           cd ${{ secrets.EC2_PROJECT_DIR }}
-          git pull origin main
-          source venv/bin/activate
-          pip install -r requirements.txt
-          python manage.py migrate --noinput
-          python manage.py collectstatic --noinput
-          sudo systemctl restart daphne
-          sudo systemctl restart nginx
-          sudo supervisorctl restart all
+
+          echo "=== 1. 최신 main 코드 받기 ==="
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+
+          echo "=== 2. 이미지 재빌드 ==="
+          docker compose build
+
+          echo "=== 3. DB 마이그레이션 / static 업로드(S3) ==="
+          docker compose run --rm spartagames-be python manage.py migrate --noinput
+          docker compose run --rm spartagames-be python manage.py collectstatic --noinput
+
+          echo "=== 4. 컨테이너 재생성 및 실행 ==="
+          mkdir -p logs
+          docker compose up -d --remove-orphans
+
+          echo "=== 5. 사용하지 않는 이미지 정리 ==="
+          docker image prune -f
+
+          docker compose ps
         EOF
 
     - name: Notify to Discord
-      # if: success() || failure()
       if: always()
       env:
         DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_GIT_DEPLOY_URL }}
+        STATUS: ${{ job.status }}
+        ACTOR: ${{ github.actor }}
+        REPO: ${{ github.repository }}
+        BRANCH: ${{ github.event.pull_request.base.ref || github.ref_name }}
+        COMMIT_SHA: ${{ github.event.pull_request.merge_commit_sha || github.sha }}
+        # PR merge 배포면 PR 제목, 수동 배포면 "수동 배포"
+        COMMIT_MSG: ${{ github.event.pull_request.title && format('PR #{0} {1}', github.event.pull_request.number, github.event.pull_request.title) || '수동 배포 (workflow_dispatch)' }}
       run: |
-        STATUS="${{ job.status }}"
         COLOR="3066993"  # 성공: 파랑
         ICON="✅"
         if [ "$STATUS" != "success" ]; then
@@ -97,12 +84,6 @@ jobs:
         fi
 
         DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-        ACTOR="${{ github.actor }}"
-        BRANCH="${GITHUB_REF#refs/heads/}"
-        REPO="${{ github.repository }}"
-        COMMIT_SHA="${{ github.sha }}"
-        COMMIT_MSG="${{ github.event.head_commit.message }}"
-        SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
 
         jq -n --arg icon "$ICON" \
               --arg status "$STATUS" \
@@ -121,63 +102,9 @@ jobs:
               fields: [
                 { name: "👤 배포자", value: $actor, inline: true },
                 { name: "🕒 배포 시간 (UTC)", value: $time, inline: true },
-                { name: "💬 커밋 메시지", value: $msg },
+                { name: "💬 내용", value: $msg },
                 { name: "🔗 커밋 링크", value: "https://github.com/\($repo)/commit/\($sha)" }
               ],
               timestamp: $time
             }]
           }' | curl -H "Content-Type: application/json" -X POST -d @- "$DISCORD_WEBHOOK_URL"
-
-
-    # - name: Notify to Discord
-    #   if: success() || failure()
-    #   env:
-    #     DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_GIT_DEPLOY_URL }}
-    #   run: |
-    #     STATUS="${{ job.status }}"
-    #     COLOR="3066993"  # 성공: 파랑
-    #     ICON="✅"
-    #     if [ "$STATUS" != "success" ]; then
-    #       COLOR="15158332"  # 실패: 빨강
-    #       ICON="❌"
-    #     fi
-
-    #     DEPLOY_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    #     ACTOR="${{ github.actor }}"
-    #     BRANCH="${GITHUB_REF#refs/heads/}"
-    #     REPO="${{ github.repository }}"
-    #     COMMIT_SHA="${{ github.sha }}"
-    #     COMMIT_MSG="${{ github.event.head_commit.message }}"
-    #     SHORT_SHA=$(echo "$COMMIT_SHA" | cut -c1-7)
-
-    #     curl -H "Content-Type: application/json" \
-    #         -X POST \
-    #         -d "{
-    #           \"embeds\": [{
-    #             \"title\": \"$ICON CD 배포 결과 ($STATUS)\",
-    #             \"description\": \"**[$REPO]** 브랜치 \`$BRANCH\` 에 배포되었습니다.\",
-    #             \"color\": $COLOR,
-    #             \"fields\": [
-    #               {
-    #                 \"name\": \"👤 배포자\",
-    #                 \"value\": \"$ACTOR\",
-    #                 \"inline\": true
-    #               },
-    #               {
-    #                 \"name\": \"🕒 배포 시간 (UTC)\",
-    #                 \"value\": \"$DEPLOY_TIME\",
-    #                 \"inline\": true
-    #               },
-    #               {
-    #                 \"name\": \"💬 커밋 메시지\",
-    #                 \"value\": \"$COMMIT_MSG\"
-    #               },
-    #               {
-    #                 \"name\": \"🔗 커밋 링크\",
-    #                 \"value\": \"https://github.com/$REPO/commit/$COMMIT_SHA\"
-    #               }
-    #             ],
-    #             \"timestamp\": \"$DEPLOY_TIME\"
-    #           }]
-    #         }" \
-    #         "$DISCORD_WEBHOOK_URL"
